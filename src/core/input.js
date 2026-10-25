@@ -1,0 +1,138 @@
+// Keyboard + mouse input with pointer lock, and a drag-to-look fallback for
+// embeds where pointer lock is unavailable (sandboxed iframes, some browsers).
+//
+// Usage per frame: read `input.down(code)`, `input.pressed(code)` (edge, true for
+// one frame), `input.consumeLook()` -> {dx, dy} in pixels, then `input.endFrame()`.
+
+const GAME_KEYS = new Set([
+  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyC', 'KeyE', 'KeyQ', 'KeyF', 'KeyR',
+  'ShiftLeft', 'ShiftRight', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab',
+]);
+
+export class Input {
+  constructor(element, bus) {
+    this.el = element;
+    this.bus = bus;
+    this.keys = new Set();
+    this.pressedKeys = new Set();
+    this.mouseButtons = new Set();
+    this.pressedButtons = new Set();
+    this.lookDX = 0;
+    this.lookDY = 0;
+    this.locked = false;
+    this.pointerLockFailed = false;
+    this.dragging = false;
+    this.enabled = true;
+    this.lastX = 0;
+    this.lastY = 0;
+
+    window.addEventListener('keydown', (e) => {
+      if (GAME_KEYS.has(e.code)) e.preventDefault();
+      if (e.repeat) return;
+      this.keys.add(e.code);
+      this.pressedKeys.add(e.code);
+      this.bus.emit('input:key', { code: e.code });
+    });
+    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
+    window.addEventListener('blur', () => this.reset());
+
+    element.addEventListener('mousedown', (e) => {
+      this.mouseButtons.add(e.button);
+      this.pressedButtons.add(e.button);
+      if (!this.locked) {
+        this.dragging = true;
+        this.lastX = e.clientX;
+        this.lastY = e.clientY;
+      }
+    });
+    window.addEventListener('mouseup', (e) => {
+      this.mouseButtons.delete(e.button);
+      this.dragging = false;
+    });
+    element.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    window.addEventListener('mousemove', (e) => {
+      if (!this.enabled) return;
+      if (this.locked) {
+        this.lookDX += e.movementX || 0;
+        this.lookDY += e.movementY || 0;
+      } else if (this.dragging && this.pointerLockFailed) {
+        this.lookDX += e.clientX - this.lastX;
+        this.lookDY += e.clientY - this.lastY;
+        this.lastX = e.clientX;
+        this.lastY = e.clientY;
+      }
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      const was = this.locked;
+      this.locked = document.pointerLockElement === this.el;
+      if (was && !this.locked) this.bus.emit('input:unlock');
+      if (!was && this.locked) this.bus.emit('input:lock');
+    });
+    document.addEventListener('pointerlockerror', () => {
+      this.pointerLockFailed = true;
+      this.bus.emit('input:lockfailed');
+    });
+  }
+
+  // Must be called from a user gesture (click). Falls back silently.
+  requestLock() {
+    if (this.locked) return;
+    try {
+      const p = this.el.requestPointerLock?.();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {
+          this.pointerLockFailed = true;
+          this.bus.emit('input:lockfailed');
+        });
+      } else if (!this.el.requestPointerLock) {
+        this.pointerLockFailed = true;
+      }
+    } catch {
+      this.pointerLockFailed = true;
+    }
+  }
+
+  releaseLock() {
+    if (document.pointerLockElement) document.exitPointerLock?.();
+  }
+
+  down(code) {
+    return this.enabled && this.keys.has(code);
+  }
+
+  pressed(code) {
+    return this.enabled && this.pressedKeys.has(code);
+  }
+
+  mouseDown(button = 0) {
+    return this.enabled && this.mouseButtons.has(button);
+  }
+
+  mousePressed(button = 0) {
+    return this.enabled && this.pressedButtons.has(button);
+  }
+
+  consumeLook() {
+    const d = { dx: this.lookDX, dy: this.lookDY };
+    this.lookDX = 0;
+    this.lookDY = 0;
+    return d;
+  }
+
+  endFrame() {
+    this.pressedKeys.clear();
+    this.pressedButtons.clear();
+  }
+
+  reset() {
+    this.keys.clear();
+    this.pressedKeys.clear();
+    this.mouseButtons.clear();
+    this.pressedButtons.clear();
+    this.lookDX = 0;
+    this.lookDY = 0;
+    this.dragging = false;
+  }
+}

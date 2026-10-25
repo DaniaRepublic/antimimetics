@@ -1,0 +1,19 @@
+{
+  "name": "when-it-calls",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A small atmospheric first-person stealth-horror proof of concept, inspired by qntm's There Is No Antimemetics Division.",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch --serve",
+    "serve": "node build.mjs --serve",
+    "smoke": "node tools/smoke.mjs"
+  },
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.2"
+  }
+}
