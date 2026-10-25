@@ -33,6 +33,14 @@ function toTexture(c, { srgb = true, repeat = true, aniso = 4 } = {}) {
 
 const hsl = (h, s, l, a = 1) => `hsla(${h},${s}%,${l}%,${a})`;
 
+// Half-resolution copy: glow masks only drive soft emissive light, full resolution is wasted memory.
+function half(src) {
+  const { c, ctx } = canvas(src.width / 2, src.height / 2);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+
 // --- noise tiles ------------------------------------------------------------------------------
 
 // Seamless multi-octave value noise as a grayscale canvas (alpha = 1).
@@ -344,7 +352,7 @@ function facadeBase(style, seed) {
     ctx.fillStyle = g;
     ctx.fillRect(x, 0, w, S);
   }
-  return { map: toTexture(c), glow: toTexture(gc) };
+  return { map: toTexture(c), glow: toTexture(half(gc)) };
 }
 
 // --- storefronts --------------------------------------------------------------------------------
@@ -554,7 +562,7 @@ function storefronts() {
     ctx.fillRect(x0, y0 + C - 140, C, 140);
     ctx.restore();
   });
-  return { map: toTexture(c, { repeat: false }), glow: toTexture(gc, { repeat: false }) };
+  return { map: toTexture(c, { repeat: false }), glow: toTexture(half(gc), { repeat: false }) };
 }
 
 // UV rect [u0, v0, u1, v1] of a storefront variant (texture v = 0 at the bottom).
