@@ -66,6 +66,7 @@ export function createLevelMaterials(T) {
     puddle: std({ map: T.decals, roughness: 0.04, metalness: 0.2, envMap: T.sky, envMapIntensity: 1.4, ...decalBase, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }),
     graffiti: std({ map: T.graffiti, emissiveMap: T.graffiti, emissive: 0xffffff, emissiveIntensity: 0.22, roughness: 0.8, ...decalBase }),
     signs: std({ map: T.signs, roughness: 0.6, metalness: 0.1 }),
+    shopsigns: std({ map: T.shopSigns, roughness: 0.65, metalness: 0.1 }),
     water: std({ roughness: 0.12, metalness: 0.7, envMap: T.sky, envMapIntensity: 1.0 }),
     chain: std({ map: T.chain, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.5, metalness: 0.6 }),
     skyline: skylineMaterial(),

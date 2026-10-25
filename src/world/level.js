@@ -28,6 +28,7 @@ class Builder {
     this.smoke = new Smoke();
     this.blinkers = level.blinkers;
     this.wires = [];
+    this.shopSign = 0; // next shop name in the sign atlas
   }
 
   solid(x, z, w, d, h, rot = 0, opts = {}) {
@@ -272,7 +273,7 @@ export class Level {
       zone,
       collider: car.collider,
       pos: new THREE.Vector3(car.collider.cx, 0.8, car.collider.cz),
-      led: B.glow.add(car.led, 0xff1a0a, 0.07, 0),
+      led: B.glow.add(car.led, 0xff1a0a, 0.12, 0),
       hazards: car.hazards.map((p) => B.glow.add(p, 0xffa030, 0.35, 0)),
       light: B.light({ pos: { x: car.collider.cx, y: 1.2, z: car.collider.cz }, color: 0xff9a2a, intensity: 30, distance: 10, stealthRadius: 4, stealthWeight: 0.6, enabled: false }),
       armed: true,

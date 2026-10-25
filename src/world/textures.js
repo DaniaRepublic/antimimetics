@@ -433,7 +433,6 @@ function storefronts() {
         }
         ctx.stroke();
       }
-      if (kind === STORE.halfShutter) signText(ctx, 'HARDWARE', x0 + 10, y0 + 60, C - 20, 56, 'rgba(190,175,150,0.55)');
     } else if (kind === STORE.boarded || kind === STORE.papered) {
       interior(false);
       if (kind === STORE.boarded) {
@@ -520,7 +519,6 @@ function storefronts() {
         for (let xx = ox; xx < ox + ow; xx += 22) ctx.fillRect(xx, oy, 5, oh);
         ctx.fillRect(ox, oy + oh * 0.3, ow, 6);
         ctx.fillRect(ox, oy + oh * 0.7, ow, 6);
-        signText(ctx, 'PAWN & LOAN', x0 + 10, y0 + 60, C - 20, 54, 'rgba(200,180,120,0.5)');
       } else if (kind === STORE.pharmacy) {
         // Burnt: soot blooms up the facade, half the letters gone.
         const sg = ctx.createLinearGradient(0, y0 + C, 0, y0);
@@ -534,7 +532,9 @@ function storefronts() {
         ctx.fillRect(x0 + 30, y0 + 40, 14, 44);
         ctx.fillRect(x0 + 15, y0 + 55, 44, 14);
       } else {
-        signText(ctx, 'DINER', x0 + 10, y0 + 60, C - 20, 64, 'rgba(200,120,100,0.6)');
+        // ghost of a removed sign: screw holes and a paler rectangle
+        ctx.fillStyle = 'rgba(255,255,255,0.05)';
+        ctx.fillRect(x0 + 60, y0 + 30, C - 120, 60);
       }
     }
     // Pilasters and bulkhead
@@ -1259,6 +1259,57 @@ function signs() {
   return toTexture(c, { repeat: false });
 }
 
+// --- shop signs --------------------------------------------------------------------------------
+
+// Fictional, generic shop names (never brands). Some letters have fallen off.
+export const SHOP_SIGNS = ['HARDWARE', 'DINER', 'PAWN & LOAN', 'LIQUORS', 'SHOE REPAIR', 'BAKERY', 'DRY CLEANING', 'BOOKS',
+  'TAILOR', 'PHOTO', 'FLORIST', 'BARBER', 'ELECTRONICS', 'DELI', 'TOBACCO', 'OPTICIAN', 'GROCERY', 'KEYS CUT',
+  'HATS', 'NOODLES', 'RECORDS', 'PET SUPPLY', 'BEAUTY', 'CHECKS CASHED', 'TOYS', 'FABRICS', 'BAR', 'DONUTS',
+  'CAMERAS', 'SHOES', 'HOTEL', 'BANK'];
+const SHOP_COLS = 4, SHOP_ROWS = 8;
+
+export function shopSignUV(i) {
+  const n = i % (SHOP_COLS * SHOP_ROWS);
+  const col = n % SHOP_COLS, row = Math.floor(n / SHOP_COLS);
+  const e = 0.002;
+  return [col / SHOP_COLS + e, 1 - (row + 1) / SHOP_ROWS + e, (col + 1) / SHOP_COLS - e, 1 - row / SHOP_ROWS - e];
+}
+
+function shopSigns() {
+  const W = 1024, H = 512, cw = W / SHOP_COLS, ch = H / SHOP_ROWS;
+  const rng = makeRng(911);
+  const { c, ctx } = canvas(W, H);
+  const N = noiseTiles();
+  const boards = ['#2a2420', '#1e2a2a', '#3a2620', '#2a2a34', '#c8bea8', '#3a3020', '#14181c', '#5a1e18'];
+  const inks = ['#d8cdb8', '#c9a24a', '#e0d8c8', '#b8452e', '#9ac0b0', '#e8e0d0'];
+  const fonts = [FONT, STENCIL, 'Georgia, "Times New Roman", serif'];
+  SHOP_SIGNS.forEach((name, i) => {
+    const x = (i % SHOP_COLS) * cw, y = Math.floor(i / SHOP_COLS) * ch;
+    const board = rng.pick(boards);
+    const light = board === '#c8bea8';
+    ctx.fillStyle = board;
+    ctx.fillRect(x + 2, y + 2, cw - 4, ch - 4);
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x + 4, y + 4, cw - 8, ch - 8);
+    // letters gone missing
+    let text = name.split('').map((ch2) => (ch2 !== ' ' && rng() < 0.12 ? ' ' : ch2)).join('');
+    if (rng() < 0.15) text = text.slice(0, Math.max(3, Math.floor(text.length * 0.6)));
+    signText(ctx, text, x + 8, y + ch / 2 + 2, cw - 16, 40, light ? '#3a2a20' : rng.pick(inks), { font: rng.pick(fonts) });
+    overlay(ctx, N.blotch, x, y, cw, ch, 0.55, 'multiply', 0.7);
+    overlay(ctx, N.grain, x, y, cw, ch, 0.3, 'overlay');
+    // rust drips from the fixings
+    for (let k = 0; k < 3; k++) {
+      const g = ctx.createLinearGradient(0, y + 8, 0, y + ch);
+      g.addColorStop(0, 'rgba(90,40,20,0.5)');
+      g.addColorStop(1, 'rgba(90,40,20,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x + 10 + rng() * (cw - 20), y + 8, 2 + rng() * 3, ch - 10);
+    }
+  });
+  return toTexture(c, { repeat: false });
+}
+
 // --- graffiti ----------------------------------------------------------------------------------
 
 export const GRAFFITI_SLOTS = { cols: 4, rows: 4, w: 512, h: 256 };
@@ -1535,6 +1586,7 @@ export function createLevelTextures() {
     decals: decals(),
     signs: signs(),
     graffiti: graffiti(),
+    shopSigns: shopSigns(),
     chain: chainLink(),
     sky: skyReflection(),
   };

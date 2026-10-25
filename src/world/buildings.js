@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mat, sub, cyl, FACE } from './level-batch.js';
-import { BAY, FLOOR, FACADE_CELLS, STOREFRONT, storeUV, STORE } from './textures.js';
+import { BAY, FLOOR, FACADE_CELLS, STOREFRONT, storeUV, STORE, shopSignUV } from './textures.js';
 import { COL, shade, mix, color } from './props.js';
 
 // City blocks. Buildings are axis-aligned boxes [x0,x1] x [z0,z1] (x0 < x1, z0 < z1, north = -Z)
@@ -57,6 +57,11 @@ function storefrontBand(B, F, kinds, rng, tint) {
       B.batch.wall(kind === STORE.laundry ? 'storeLit' : 'store', pos.x, 0, pos.z, w, STORE_H, yaw, storeUV(kind), shade(color(0xffffff), 0.85 + rng() * 0.25));
     }
     fronts.push({ kind, x: pos.x, z: pos.z, w, yaw });
+    // A shop name board over the sign band on about half of the generic units.
+    if (kind !== STORE.laundry && kind !== STORE.pharmacy && kind !== STORE.papered && rng() < 0.55) {
+      const sw = Math.min(w * 0.82, 4.6);
+      B.batch.wall('shopsigns', pos.x + F.nx * 0.06, 3.5, pos.z + F.nz * 0.06, sw, sw * 0.19, yaw, shopSignUV(B.shopSign++), shade(color(0xffffff), 0.7 + rng() * 0.3));
+    }
     // Awnings: torn fabric on a frame, some collapsed.
     if (kind !== STORE.laundry && rng() < 0.3) {
       const fabric = rng.pick([color(0x5a1a16), color(0x1e3a2c), color(0x3a2a1e), color(0x2a2a36)]);

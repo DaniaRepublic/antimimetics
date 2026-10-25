@@ -75,9 +75,6 @@ export function buildCity(B) {
       else paint(z, x, 3.2, 0.55);
     }
   };
-  const scatter = (x0, x1, z0, z1, n, fn) => {
-    for (let i = 0; i < n; i++) fn(x0 + rng() * (x1 - x0), z0 + rng() * (z1 - z0), i);
-  };
 
   // ==========================================================================================
   // Z0 — THE ALLEY
@@ -201,7 +198,7 @@ export function buildCity(B) {
   car(B, { x: -4.6, z: -47, yaw: -0.4, type: 'hatch', door: true });
   car(B, { x: 9.7, z: -52, yaw: PI + 0.04, type: 'pickup' });
   car(B, { x: 1.6, z: -55.5, yaw: 1.25, type: 'sedan', burnt: true });
-  const z1Alarm = car(B, { x: -9.75, z: -59.5, yaw: 0.02, type: 'sedan', color: color(0x1f2b44), alarm: 'main_alarm' });
+  const z1Alarm = car(B, { x: -9.75, z: -68.0, yaw: 0.02, type: 'sedan', color: color(0x1f2b44), alarm: 'main_alarm' });
   car(B, { x: -3.2, z: -63.5, yaw: 0.7, type: 'sedan', roll: 1, police: true });
   car(B, { x: 6.4, z: -66, yaw: -0.12, type: 'hatch' });
   car(B, { x: -3.8, z: -80.5, yaw: 0.4, type: 'sedan', burnt: true, fire: true, fireScale: 1.15 });
@@ -213,7 +210,7 @@ export function buildCity(B) {
   car(B, { x: 6.0, z: -114.5, yaw: -0.35, type: 'hatch', burnt: true });
   car(B, { x: -1.5, z: -119, yaw: 1.45, type: 'pickup' });
   // Sidewalk clutter
-  dumpster(B, { x: -10.6, z: -66.5, yaw: W });
+  dumpster(B, { x: -10.6, z: -61.5, yaw: W });
   dumpster(B, { x: 10.7, z: -44, yaw: E });
   dumpster(B, { x: 10.7, z: -101, yaw: E, open: true });
   newsBox(B, { x: 8.7, z: -57.5, yaw: W });
@@ -232,7 +229,7 @@ export function buildCity(B) {
     rubble(B, { x, z, w: 2.2, d: 2.2, h: 0.35, collider: false, density: 0.3 * n / 6 });
   }
   // Rooftop billboard over the east side, facing the alley mouth.
-  billboard(B, { x: 22, y: 22.5, z: -60, yaw: S + 0.25, w: 12, h: 6, post: 2 });
+  billboard(B, { x: 15.5, y: 24.0, z: -57, yaw: W + 0.55, w: 11, h: 5.5, post: 2.5 });
   // Power lines along the cross streets
   {
     const a = powerPole(B, { x: -18, z: -36.6 });
@@ -244,12 +241,12 @@ export function buildCity(B) {
     for (let i = 0; i < 3; i++) B.wire(a[i], new THREE.Vector3(-12, 9, -24), 0.5, 4);
   }
   // The lit laundromat (sentry post) — the only working shop light in the street.
-  const laundryMat = B.level.materials;
+  const mats = B.level.materials;
   B.light({
     pos: { x: -13.2, y: 2.6, z: -90.3 }, color: 0xd6efe6, intensity: 75, distance: 17, stealthRadius: 9.5, stealthWeight: 0.95,
     selfFlicker: true, flickerStyle: 'buzz', halo: { size: 1.6, intensity: 0.6 },
     onFlicker: (f) => {
-      laundryMat.storeLit.emissiveIntensity = 1.6 * f;
+      mats.storeLit.emissiveIntensity = 1.6 * f;
     },
   });
   b.box('emissive', mat(-12.3, 4.0, -90.3), 0.08, 0.06, 4.5, color(0xe8fff6));
@@ -333,7 +330,9 @@ export function buildCity(B) {
   fuelSign(B, { x: -26.8, z: -184.5, yaw: E });
   B.light({ pos: gas.tubes[1], color: 0xd8f0e8, intensity: 28, distance: 12, stealthRadius: 5, stealthWeight: 0.7, selfFlicker: true, flickerStyle: 'failing', halo: { size: 0.9, intensity: 1.0 } });
   b.box('emissive', mat(gas.tubes[1].x, 4.88, gas.tubes[1].z), 0.2, 0.04, 5.5, color(0xc8e8dc), { faces: FACE.ny });
-  const plazaAlarm = car(B, { x: -31, z: -169, yaw: 0.04, type: 'sedan', color: color(0x7a1d18), alarm: 'plaza_alarm' });
+  // The alarm car waits at the canopy's edge, within earshot of everyone guarding the arch.
+  const plazaAlarm = car(B, { x: -25.0, z: -171.2, yaw: 0.06, type: 'sedan', color: color(0x7a1d18), alarm: 'plaza_alarm' });
+  car(B, { x: -31, z: -168.5, yaw: 0.04, type: 'hatch', door: true });
   // Fire barrel by the arch: lights the snatchers clustered at the exit.
   barrel(B, { x: -8.6, z: -203, fire: true, light: { stealthRadius: 6.5 } });
   barrel(B, { x: -9.3, z: -203.8 });
@@ -395,9 +394,11 @@ export function buildCity(B) {
   car(B, { x: -10.2, z: -318, yaw: 0.1, type: 'van', burnt: true });
   for (const [x, z] of [[-9, -244], [7, -268], [-8, -296], [9, -330], [0, -228]]) belongings(B, { x, z, n: 4, spread: 2 });
   // A fire high in the tallest tower lights the boulevard from above (no stealth effect).
-  B.fire(new THREE.Vector3(18.6, 25.6, -276), 1.6, { stealthRadius: 0.1, stealthWeight: 0, intensity: 70, distance: 34 });
-  B.fire(new THREE.Vector3(18.6, 25.6, -279), 1.2, false);
-  b.box('emissive', mat(18.0, 25.4, -277.5), 0.2, 2.6, 6, color(0x2a0a04), { faces: FACE.nx });
+  // (BE2's west face is at x = 17.5: the burning window and its flames sit just in front of it.)
+  b.wall('emissive', 17.47, 24.4, -277.5, 6.4, 2.6, W, [0, 0, 1, 1], color(0xff6a20));
+  B.fire(new THREE.Vector3(17.0, 24.6, -276.2), 2.2, { stealthRadius: 0.1, stealthWeight: 0, intensity: 90, distance: 36 });
+  B.fire(new THREE.Vector3(17.1, 24.6, -279.0), 1.7, false);
+  B.fire(new THREE.Vector3(17.2, 27.8, -277.6), 1.3, false);
   // Graffiti: the rule of the boulevard
   B.graffiti(GRAFFITI.calls, 3.48, 1.2, -212.2, W, 4.6, 2.3, 'WHEN IT CALLS THEY LISTEN — when the giant calls, they freeze and look up. Blind and deaf until it ends.', { range: 9, duration: 7 });
   B.graffiti(GRAFFITI.move, -2.0, 0.15, -234.25, S, 2.6, 1.0, 'MOVE WHEN IT CALLS. Freeze behind cover between calls.', { range: 8 });
@@ -502,11 +503,16 @@ export function buildCity(B) {
   // ==========================================================================================
   // Gameplay data
   const zones = [
-    zone(0, 'alley', 'The Alley', rect(-60, 70, -20, 30), 'Get to the street.', { x: 62, z: -118 }, 'calm'),
-    zone(1, 'main', 'Main Street', rect(-60, 70, -138, -20), 'Get up the street. Stay low, stay out of the light.', { x: 62, z: -150 }, 'calm'),
-    zone(2, 'plaza', 'The Civic Plaza', rect(-60, 70, -212, -138), 'Get through the arch on the north side.', { x: 48, z: -212 }, 'calm'),
-    zone(3, 'boulevard', 'The Boulevard', rect(-60, 70, -338, -212), 'Cross the boulevard.', { x: 0, z: -278 }, 'near'),
-    zone(4, 'overpass', 'The Overpass', rect(-60, 70, -460, -338), 'Get past the gate. Leave the city.', { x: 62, z: -405 }, 'calm'),
+    zone(0, 'alley', 'The Alley', rect(-60, 70, -20, 30), 'Get to the street.', { x: 62, z: -118 }, 'calm',
+      'C to crouch. E to pick things up, F or left click to throw.'),
+    zone(1, 'main', 'Main Street', rect(-60, 70, -138, -20), 'Get up the street. Stay low, stay out of the light.', { x: 62, z: -150 }, 'calm',
+      'Keep the wrecks between you and them.'),
+    zone(2, 'plaza', 'The Civic Plaza', rect(-60, 70, -212, -138), 'Get through the arch on the north side.', { x: 48, z: -212 }, 'calm',
+      'They go to noise. Some cars still have alarms.'),
+    zone(3, 'boulevard', 'The Boulevard', rect(-60, 70, -338, -212), 'Cross the boulevard.', { x: 0, z: -278 }, 'near',
+      'Wait for the call. Then move.'),
+    zone(4, 'overpass', 'The Overpass', rect(-60, 70, -460, -338), 'Get past the gate. Leave the city.', { x: 62, z: -405 }, 'calm',
+      'The chain will be heard. There may be a quieter way round.'),
   ];
   const checkpoints = [
     { id: 'start', order: 0, pos: { x: 0, z: 4 }, yaw: 0, bottles: 0, zone: 0, area: rect(-3, 3, 0, 8) },
@@ -529,7 +535,7 @@ export function buildCity(B) {
     { id: 'z2_sentry_w', zone: 2, kind: 'sentry', pos: { x: -5.5, z: -198 }, yaw: S - 0.25, scanArc: 1.5, scanPeriod: 10 },
     { id: 'z2_sentry_e', zone: 2, kind: 'sentry', pos: { x: 5, z: -199.5 }, yaw: S + 0.35, scanArc: 1.4, scanPeriod: 8 },
     { id: 'z2_wander', zone: 2, kind: 'wander', pos: { x: -1, z: -192 }, radius: 5 },
-    { id: 'z2_patrol', zone: 2, kind: 'patrol', pos: { x: -15, z: -199.5 }, yaw: E, route: [{ x: -15, z: -199.5 }, { x: 10.5, z: -197 }], loop: true, pause: 3 },
+    { id: 'z2_patrol', zone: 2, kind: 'patrol', pos: { x: -15, z: -199.5 }, yaw: E, route: [{ x: -15, z: -199.5 }, { x: 8, z: -197.5 }], loop: true, pause: 3 },
     // Z3: devout watchers on both sidewalks, facing across the open ground.
     { id: 'z3_devout_1', zone: 3, kind: 'devout', pos: { x: -15.2, z: -243 }, yaw: E - 0.15, scanArc: 1.7, scanPeriod: 12 },
     { id: 'z3_devout_2', zone: 3, kind: 'devout', pos: { x: 15.2, z: -259 }, yaw: W, scanArc: 1.8, scanPeriod: 11 },
@@ -574,8 +580,8 @@ export function buildCity(B) {
   };
 }
 
-function zone(index, id, name, bounds, objective, anchor, calls) {
-  return { id, index, name, bounds, objective, leviathan: { anchor, calls } };
+function zone(index, id, name, bounds, objective, anchor, calls, hint) {
+  return { id, index, name, bounds, objective, hint, leviathan: { anchor, calls } };
 }
 
 // Burnt-out pharmacy: storefront on Main Street, a dark shop floor, a back door into the yard.

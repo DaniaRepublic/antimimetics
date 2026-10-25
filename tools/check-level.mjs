@@ -207,6 +207,18 @@ const R = await h.eval(() => {
     }
     res.boulevard.exposed = `${exposed}/${tested}`;
   }
+  // Alarm reach: every snatcher of the alarm's zone (spawn + route) lies within alarm hearing range.
+  res.alarmReach = L.alarms.map((a) => {
+    const far = [];
+    for (const e of L.enemies) {
+      if (e.zone !== a.zone) continue;
+      for (const p of [e.pos, ...(e.route || [])]) {
+        const d = Math.hypot(p.x - a.pos.x, p.z - a.pos.z);
+        if (d > 48 - 2) far.push(`${e.id}@${d.toFixed(0)}m`);
+      }
+    }
+    return { id: a.id, far };
+  });
   // Render / build cost
   res.buildMs = L.buildMs;
   res.texMs = L.textures?.buildMs;
@@ -238,6 +250,7 @@ for (const l of R.legs) check(l.ok, `path ${l.from} -> ${l.to} (${l.len.toFixed(
 console.log(`route length via nav: ${R.routeLength.toFixed(0)} m`);
 console.log(`boulevard crouch-hidden bands (z): ${R.boulevard.hiddenBands.join(', ')}; max gap ${R.boulevard.maxGap.toFixed(1)} m; open ground exposed ${R.boulevard.exposed}`);
 check(R.boulevard.maxGap <= 22, `boulevard: hidden pockets no more than 22 m apart (max gap ${R.boulevard.maxGap.toFixed(1)} m)`);
+for (const a of R.alarmReach) check(a.far.length === 0, `alarm ${a.id} reaches every snatcher in its zone ${a.far.join(' ')}`);
 for (const c of R.checkpoints) check(c.walk && c.region && c.inArea && c.zone, `checkpoint ${c.id} walkable/region/area/zone`);
 for (const s of R.spawnSafety) check(s.seen.length === 0, `checkpoint ${s.id} not visible to enemies ${s.seen.join(' ')}`);
 for (const e of R.enemies) check(e.bad === 0 && e.routeOk, `enemy ${e.id} (${e.kind}, zone ${e.zone}) spawn/route walkable + connected`);
