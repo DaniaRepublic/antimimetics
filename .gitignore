@@ -1,7 +1,4 @@
-node_modules/
-dist/.tmp/
-dist/smoke/
-dist/sandbox-*.html
-dist/shots/
+node_modules
+dist/
 *.log
 .DS_Store
