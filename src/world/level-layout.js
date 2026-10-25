@@ -573,7 +573,7 @@ export function buildCity(B) {
       { x: 70, z: 40 }, { x: 76, z: -60 }, { x: 64, z: -150 }, { x: 46, z: -214 }, { x: 0, z: -278 },
       { x: 38, z: -345 }, { x: 68, z: -420 }, { x: 88, z: -540 },
     ],
-    titleCamera: { pos: [-3.2, 1.7, -27.5], target: [14, 17, -105] },
+    titleCamera: { pos: [-3.2, 1.7, -27.5], target: [14, 21, -105] },
     exitZ: -430,
     routeRects: ROUTE_RECTS,
     footprints,
@@ -721,6 +721,9 @@ function garage(B, footprints) {
   B.batch.box('metal', mat(-13.8, 0, -337.6), 0.3, 1.0, 0.3, color(0x8a7a30), { ao: 0 });
   B.batch.box('paint', mat(-14.0, 1.0, -336.2, 0, 1.2), 0.08, 0.08, 3.2, color(0xc8b040), { ao: 0 });
   B.batch.wall('signs', -15.2, 2.0, z1 + 0.27, 2.0, 1.0, S, signUV('parking'));
+  // second sign on the street side, readable from the road (and the checkpoint there)
+  b.geom('metal', cyl(0.04, 0.04, 3.4, 6), mat(-12.95, 0, -341.2), COL.steel);
+  B.batch.wall('signs', -12.88, 2.3, -341.2, 1.8, 0.9, E, signUV('parking'));
   // Pillar grid
   for (const x of [-37, -29, -21]) {
     for (let z = -346; z > z0 + 2; z -= 8) {

@@ -7,12 +7,13 @@ import { skylineMaterial } from './level-fx.js';
 
 // Facades: the emissive map is a window-glow mask; which windows are actually lit is decided in
 // the shader per window cell from a per-face seed (attribute aLit = [seed, probability]), so lit
-// windows never repeat in a visible lattice even though the texture tiles.
+// windows never repeat in a visible lattice even though the texture tiles. The material's own
+// emissive colour is black, so if this patch were ever replaced no window would glow at all.
 function facadeMaterial(tex, panes) {
   const m = new THREE.MeshStandardMaterial({
     map: tex.map,
     emissiveMap: tex.glow,
-    emissive: 0xffffff,
+    emissive: 0x000000,
     emissiveIntensity: 1.0,
     vertexColors: true,
     roughness: 0.92,
@@ -36,7 +37,7 @@ float litHash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.
   float lit = step( h1, vLit.y );
   vec3 tint = mix( vec3( 1.0, 0.46, 0.17 ), vec3( 0.9, 0.08, 0.03 ), step( 0.72, h2 ) );
   tint *= 0.25 + 0.6 * h2;
-  totalEmissiveRadiance *= emissiveColor.rgb * tint * lit;
+  totalEmissiveRadiance = emissiveColor.rgb * tint * lit;
 #endif`);
   };
   m.customProgramCacheKey = () => `facade-lit-${panes}`;
