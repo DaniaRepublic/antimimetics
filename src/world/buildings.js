@@ -195,7 +195,7 @@ export function building(B, spec) {
       atm.registerLightSource({
         pos, color: 0xffa95e, intensity: 22, distance: 11, flicker: 0.12, stealthRadius: 2.5, stealthWeight: 0.4,
       });
-      B.glow?.add(pos, 0xffa95e, 0.5, 1.8);
+      B.glow?.add(pos, 0xffa95e, 0.7, 2.4);
     }
   }
   if (spec.collider !== false) B.solid(cx, cz, w, d, h - y0, 0, { tag: 'building', y: y0 });

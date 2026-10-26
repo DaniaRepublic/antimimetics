@@ -1198,12 +1198,25 @@ function signs() {
     g.addColorStop(1, '#a06a4a');
     ctx.fillStyle = g;
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = 'rgba(230,220,200,0.85)';
+    // A smiling commuter at a bus window... whose face has been scraped off the paper.
+    ctx.fillStyle = 'rgba(40,52,70,0.9)';
+    ctx.fillRect(x + 18, y + 52, w - 36, 150); // bus window
+    ctx.fillStyle = 'rgba(200,170,140,0.9)';
     ctx.beginPath();
-    ctx.arc(x + w / 2, y + 100, 46, 0, Math.PI * 2);
+    ctx.ellipse(x + w / 2, y + 112, 30, 38, 0, 0, Math.PI * 2); // head
     ctx.fill();
-    ctx.fillRect(x + w / 2 - 50, y + 150, 100, 90);
+    ctx.fillStyle = 'rgba(150,60,40,0.92)';
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + 205, 72, 58, 0, Math.PI, Math.PI * 2); // coat, shoulders
+    ctx.fill();
+    ctx.fillStyle = 'rgba(205,195,180,0.95)'; // bare paper where the face was torn away
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2 - 24, y + 96);
+    for (let k = 0; k <= 10; k++) ctx.lineTo(x + w / 2 - 24 + k * 4.8, y + 92 + (k % 2) * 7 + rng() * 4);
+    for (let k = 10; k >= 0; k--) ctx.lineTo(x + w / 2 - 24 + k * 4.8, y + 136 + (k % 2) * 6 + rng() * 4);
+    ctx.fill();
     signText(ctx, 'RIDE WITH US', x + 10, y + 30, w - 20, 26, '#f0e8d8');
+    signText(ctx, 'ASHFORD TRANSIT', x + 30, y + 226, w - 60, 16, 'rgba(240,232,216,0.8)');
     wear(SIGN.poster, 0.5);
   }
   // STOP

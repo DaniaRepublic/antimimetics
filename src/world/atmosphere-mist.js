@@ -166,7 +166,7 @@ void main() {
   // Soft knee on the lamps' glow: a halo may bloom, but standing next to a lamp in a mist bank
   // must not turn the whole frame into a white-out.
   float peak = max( Lp.r, max( Lp.g, Lp.b ) );
-  L += Lp / ( 1.0 + 0.7 * peak );
+  L += Lp / ( 1.0 + 1.1 * peak );
   gl_FragColor = vec4( L, T );
 }
 `;

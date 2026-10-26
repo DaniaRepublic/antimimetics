@@ -4,13 +4,15 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { ScenePass, MistPass } from './atmosphere-mist.js';
 
-// Final pass: tone mapping (ACES, as three's OutputPass would do: merged here to save a full-screen
-// pass), then the look in display space: lens distortion for the death sequence, chromatic
+// Final pass: the bloom is added here (instead of UnrealBloomPass blending it over the frame) and
+// tone mapping (ACES, as three's OutputPass would do) happens here too, each saving a full-screen
+// pass; then the look in display space: lens distortion for the death sequence, chromatic
 // aberration, a maroon/amber colour grade, threat-driven vignette and heartbeat pulse, film grain.
 export const GradeShader = {
   name: 'AtmosphereGrade',
   uniforms: {
     tDiffuse: { value: null },
+    tBloom: { value: null }, // UnrealBloomPass' composite (quarter res), blended here
     uRes: { value: new THREE.Vector2(1, 1) },
     uTime: { value: 0 },
     uThreat: { value: 0 },
@@ -31,6 +33,7 @@ export const GradeShader = {
   `,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
+    uniform sampler2D tBloom;
     uniform vec2 uRes;
     uniform float uTime;
     uniform float uThreat;
@@ -82,6 +85,9 @@ export const GradeShader = {
       col.r = texture2D( tDiffuse, uv + dir * ab ).r;
       col.g = texture2D( tDiffuse, uv ).g;
       col.b = texture2D( tDiffuse, uv - dir * ab * 1.2 ).b;
+      // (exactly what the bloom's own additive blend did: rgb weighted by its alpha)
+      vec4 bloom = texture2D( tBloom, uv );
+      col += bloom.rgb * bloom.a;
       col = toDisplay( col );
 
       // --- grade: maroon shadows, amber highlights, gentle S-curve, muted non-reds
@@ -125,7 +131,7 @@ export const GradeShader = {
   `,
 };
 
-// Scene (+ depth texture) -> volumetric mist -> bloom (reduced res) -> tone map + grade.
+// Scene (+ depth texture) -> volumetric mist -> bloom (reduced res) -> bloom blend + tone map + grade.
 export function createPost({ renderer, scene, camera, noise, lights, mistColors }) {
   const pr = renderer.getPixelRatio();
   const size = renderer.getSize(new THREE.Vector2());
@@ -142,7 +148,15 @@ export function createPost({ renderer, scene, camera, noise, lights, mistColors 
   // Bloom at half the composer resolution (the pass itself already halves again internally).
   const bloomSetSize = bloom.setSize.bind(bloom);
   bloom.setSize = (w, h) => bloomSetSize(Math.max(2, Math.round(w * 0.5)), Math.max(2, Math.round(h * 0.5)));
+  // The bloom's last step (an additive full-screen blend of its composite over the frame) is
+  // skipped; the grade samples the composite instead.
+  const quad = bloom.fsQuad;
+  const quadRender = quad.render.bind(quad);
+  quad.render = (r) => {
+    if (quad.material !== bloom.blendMaterial) quadRender(r);
+  };
   const grade = new ShaderPass(GradeShader);
+  grade.uniforms.tBloom.value = bloom.renderTargetsHorizontal[0].texture;
   // Tone mapping happens inside the grade (see GradeShader); three must not add its own.
   grade.material.toneMapped = false;
   composer.addPass(scenePass);

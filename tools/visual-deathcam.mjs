@@ -12,7 +12,12 @@ const h = await launch({ html, query: `autostart&god&quality=${shots ? 2 : 0}`, 
 h.page.setDefaultTimeout(240000);
 await h.eval(() => {
   const g = window.__game;
-  g.__tick = g.tick.bind(g);
+  const tick = g.tick.bind(g);
+  // camera placed before each tick, as the real frame loop does (the grab framing reads it)
+  g.__tick = (dt) => {
+    g.player.applyCamera(g.camera);
+    tick(dt);
+  };
   g.tick = () => {};
   const s = document.createElement('style');
   s.textContent = '#wic-hud, #wic-hud * { visibility: hidden !important; }';

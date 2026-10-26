@@ -234,6 +234,30 @@ console.log(JSON.stringify(grab));
 check(grab.distance > 0.3 && grab.distance < 0.6, `grab: face ${grab.distance.toFixed(2)} m from the eye at 1.0 m root distance`);
 check(Math.abs(grab.head[1] - 1.65) < 0.2, `grab: face height ${grab.head[1].toFixed(2)} m near eye height`);
 
+// --- death cam when the AI's root ends up too close (caught mid-stride): the visible body slides
+// back from the scene camera so the face still lands ~0.4 m away, not inside the near plane.
+const grabClose = await h.eval(() => {
+  const g = window.__game;
+  const V = g.camera.position.constructor;
+  g.setup([{ seed: 0, mode: 'grab', x: 0, z: 0, yaw: Math.PI }]);
+  const had = g.camera.parent;
+  g.scene.add(g.camera);
+  g.camera.position.set(0, 1.65, 0.52); // root 0.52 m away, in front of it (it faces +Z)
+  g.camera.updateMatrixWorld();
+  g.advance(1.5);
+  const head = g.models[0].model.headAnchor.getWorldPosition(new V());
+  const d = head.distanceTo(g.camera.position);
+  // and once it lets go, the body eases back onto its root
+  for (let i = 0; i < 120; i++) g.models[0].model.update(1 / 60, { mode: 'idle' });
+  const rig = g.models[0].model.root.children[0].position;
+  if (had) had.add(g.camera);
+  else g.scene.remove(g.camera);
+  return { d, rigBack: Math.hypot(rig.x, rig.z) };
+});
+console.log(JSON.stringify(grabClose));
+check(grabClose.d > 0.3 && grabClose.d < 0.6, `grab at 0.52 m root distance: face ${grabClose.d.toFixed(2)} m from the camera`);
+check(grabClose.rigBack < 0.05, `after the grab the body returns to its root (${grabClose.rigBack.toFixed(3)} m off)`);
+
 // --- sleepers: anim.slump sits the figure down; easing it to 0 over 1.5 s gets it up again.
 const slump = await h.eval(() => {
   const g = window.__game;

@@ -35,12 +35,14 @@ const VIEWS = [
   ['z0_van_crouch', 0.8, -6, N - 0.08, 0.0, true],
   ['z0_mouth', 0, -19, N, 0.03, false],
   ['z0_lev', 0, -10, 0, 0, false, 'lev'],
+  ['z0_mouth_lev', 0, -23, 0, 0, false, 'lev'],
   ['z1_street', 0, -30, N, 0.02, false],
   ['z1_cover_crouch', -6.5, -45.5, N + 0.1, 0.0, true],
   ['z1_fire', 3.5, -72, N + 0.05, 0.0, false],
   ['z1_laundromat', 5.5, -84, N + 0.55, 0.0, true],
   ['z1_pharmacy_gap', 4, -110, N - 0.6, 0.02, false],
   ['z1_lev', 0, -60, 0, 0, false, 'lev'],
+  ['z1_cross_lev', 2, -76, 0, 0, false, 'lev'],
   ['z1_pharmacy_in', 15.5, -118, N + 0.5, 0.0, true],
   ['z2_yard', 20.7, -141, N + 0.25, 0.04, false],
   ['z2_arch', 16, -158, N + 0.35, 0.03, true],
@@ -67,9 +69,23 @@ await h.eval((hud) => {
   // Freeze the real-time loop: the tour advances the world explicitly (deterministic shots).
   g.__tick = g.tick.bind(g);
   g.tick = () => {};
+  // Place the camera as game.render() would before each tick: the atmosphere ranks its pooled
+  // lights from the camera, so a frozen camera would light a viewpoint with the previous one's lamps.
+  g.__cam = () => {
+    const tc = g.level.titleCamera;
+    if (g.state === 'title' && tc) {
+      g.camera.position.set(tc.pos[0], tc.pos[1], tc.pos[2]);
+      g.camera.lookAt(tc.target[0], tc.target[1], tc.target[2]);
+    } else g.player.applyCamera(g.camera);
+    g.camera.updateMatrixWorld();
+  };
+  g.__step = (step) => {
+    g.__cam();
+    g.__tick(step);
+  };
   g.__sim = (seconds, step = 1 / 30) => {
     const n = Math.ceil(seconds / step);
-    for (let i = 0; i < n; i++) g.__tick(step);
+    for (let i = 0; i < n; i++) g.__step(step);
   };
   if (!hud) {
     const s = document.createElement('style');
@@ -264,7 +280,7 @@ if (want('sleeper')) {
       g.bus.emit('noise', { pos: s.position.clone().add(new s.position.constructor(1.5, 0, 2)), radius: 20, loudness: 1, source: 'bottle' });
       let t = 0;
       while (s.slump > 0.5 && t < 6) {
-        g.__tick(1 / 30);
+        g.__step(1 / 30);
         t += 1 / 30;
       }
     });
@@ -285,7 +301,7 @@ if (want('death')) {
     g.player.pitch = 0;
     let t = 0;
     while (g.state !== 'caught' && t < 25) {
-      g.__tick(1 / 30);
+      g.__step(1 / 30);
       t += 1 / 30;
     }
     return { state: g.state, t, caughtBy: g.caughtBy?.id };
@@ -310,7 +326,7 @@ if (want('death')) {
     for (const at of [1.0, 1.8, 2.4]) {
       await h.eval((at) => {
         const g = window.__game;
-        while (g.stateTime < at && g.state === 'caught') g.__tick(1 / 30);
+        while (g.stateTime < at && g.state === 'caught') g.__step(1 / 30);
       }, at);
       results[`death_${at}`] = await snap(`death_${at.toFixed(1)}s`);
     }

@@ -414,7 +414,7 @@ function buildGeometry(variant, seed) {
 // Share of the scene fog the figures take at mid range (atmosphere-fog.js, ATMO_FOG_SILHOUETTE):
 // at 15-40 m a snatcher stays a darker shape in the mist than the street behind it, which is
 // what a player sneaking past needs to read. Past ~75 m the full fog swallows it again.
-const FOG_SILHOUETTE = '0.45';
+const FOG_SILHOUETTE = '0.32';
 
 let clothMaterial = null;
 

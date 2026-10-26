@@ -563,6 +563,53 @@ class SnatcherAnimator {
   }
 }
 
+// The grab pose is built for a root ~1.08 m from the victim's eye: the lunge then brings the face
+// to ~0.4 m, filling the death camera. If the root ends up closer (it caught you mid-stride), the
+// face would sit inside the camera's near plane and the death cam would stare through the hood at
+// the street. So while grabbing, the visible body (the rig, not the AI's root) slides back from the
+// camera to that distance; every other mode eases it home. Purely visual: the AI never sees it.
+const GRAB_DISTANCE = 1.08;
+const _grabCam = new THREE.Vector3();
+const _grabRoot = new THREE.Vector3();
+const _grabPush = new THREE.Vector3();
+const _grabInv = new THREE.Quaternion();
+const sceneCameras = new WeakMap();
+
+function findSceneCamera(obj) {
+  let top = obj;
+  while (top.parent) top = top.parent;
+  if (!top.isScene) return null;
+  let cam = sceneCameras.get(top);
+  if (cam === undefined || (cam && cam.parent !== top)) {
+    cam = top.children.find((c) => c.isPerspectiveCamera) || null;
+    sceneCameras.set(top, cam);
+  }
+  return cam;
+}
+
+function keepGrabDistance(root, rig, animator, dt) {
+  _grabPush.set(0, 0, 0);
+  if (animator.mode === 'grab') {
+    const cam = findSceneCamera(root);
+    if (cam) {
+      cam.getWorldPosition(_grabCam);
+      root.getWorldPosition(_grabRoot);
+      const dx = _grabRoot.x - _grabCam.x, dz = _grabRoot.z - _grabCam.z;
+      const d = Math.hypot(dx, dz);
+      if (d < GRAB_DISTANCE && d < 3) {
+        // away from the camera; straight back along the body if the camera is right on the root
+        if (d > 1e-3) _grabPush.set(dx / d, 0, dz / d).multiplyScalar(GRAB_DISTANCE - d);
+        else _grabPush.set(0, 0, GRAB_DISTANCE).applyQuaternion(root.getWorldQuaternion(_grabInv));
+        // world -> root-local (root carries only yaw)
+        _grabPush.applyQuaternion(root.getWorldQuaternion(_grabInv).invert());
+      }
+    }
+  }
+  const k = 1 - Math.exp(-(animator.mode === 'grab' ? 14 : 4) * Math.min(Math.max(dt, 0), 0.1));
+  rig.position.x += (_grabPush.x - rig.position.x) * k;
+  rig.position.z += (_grabPush.z - rig.position.z) * k;
+}
+
 // Creates one snatcher. The seed picks the face variant and individual quirks (height, timing).
 export function createSnatcherModel(seed = 1) {
   const seedInt = seedToInt(seed);
@@ -610,6 +657,7 @@ export function createSnatcherModel(seed = 1) {
     },
     update(dt, anim) {
       animator.update(dt, anim || {});
+      keepGrabDistance(root, rig, animator, dt);
     },
     dispose() {
       root.removeFromParent();
