@@ -429,14 +429,16 @@ const STEP_MODES = {
 
 export function footstep(b, { mode = 'walk' } = {}) {
   const cfg = STEP_MODES[mode] ?? STEP_MODES.walk;
+  // Sprint: the heel thump can land on the sample's peak (up to ~1.1), so it gets a safety limiter.
+  const dest = mode === 'sprint' ? b.limiter(0.92) : b.out;
   const s = b.sample(pick(banks.step(b.ctx)), b.t, cfg.rate * rand(0.93, 1.07));
-  b.chain(s, b.filter('lowpass', cfg.lp * rand(0.8, 1.2), 0.6), b.gain(cfg.gain), b.out);
+  b.chain(s, b.filter('lowpass', cfg.lp * rand(0.8, 1.2), 0.6), b.gain(cfg.gain), dest);
   if (mode === 'sprint') {
     const o = b.osc('sine', 70, b.t, b.t + 0.25);
     contour(o.frequency, [[b.t, 72], [b.t + 0.12, 42]]);
     const g = b.gain(0);
     perc(g.gain, b.t, 0.3, 0.004, 0.04, b.t + 0.25);
-    b.chain(o, g, b.out);
+    b.chain(o, g, dest);
   }
   return 0.5;
 }
@@ -529,9 +531,10 @@ export function chainGrind(b) {
   const { ctx } = b;
   const t = b.t;
   const D = rand(0.7, 1.0);
+  const lim = b.limiter(0.92); // squeal + grind + chain sample can sum past 1 on some draws
   const out = b.gain(0);
   lines(out.gain, [[t, 0], [t + 0.08, 1], [t + D * 0.7, 0.9], [t + D, 0]]);
-  out.connect(b.out);
+  out.connect(lim);
   const sq = b.osc('sawtooth', 1800, t, t + D);
   contour(sq.frequency, [[t, rand(1500, 1900)], [t + D, rand(2400, 3000)]]);
   const sqMix = b.gain(1);
@@ -542,7 +545,7 @@ export function chainGrind(b) {
   contour(grind.frequency, [[t, rand(25, 35)], [t + D, rand(45, 70)]]);
   b.chain(grind, b.filter('bandpass', 1500, 6), b.gain(1.3), out);
   b.chain(grind, b.filter('bandpass', 3100, 9), b.gain(0.9), out);
-  b.chain(b.sample(pick(banks.chain(ctx)), t + rand(0, 0.15), rand(0.9, 1.1)), b.gain(0.55), b.out);
+  b.chain(b.sample(pick(banks.chain(ctx)), t + rand(0, 0.15), rand(0.9, 1.1)), b.gain(0.55), lim);
   return Math.max(D, 1.05);
 }
 

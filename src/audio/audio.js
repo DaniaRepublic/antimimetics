@@ -30,7 +30,7 @@ const LEVEL = {
   wind: 0.22, drone: 0.07, tinnitusMin: 0.0015, tinnitusMax: 0.02, heart: 0.2, chase: 0.3,
   footfall: 0.95, call: 0.75, legGroan: 0.55,
   metalGroan: 0.5, structureCreak: 0.4, distantWail: 0.3,
-  whisper: 2.0, questionCreak: 2.4, shriek: 0.75, stinger: 0.32, hiss: 0.9, exhale: 0.9,
+  whisper: 1.45, questionCreak: 2.4, shriek: 0.75, stinger: 0.32, hiss: 0.9, exhale: 0.9,
   creatureStep: 0.75, footstep: 0.55, breath: 0.42, gasp: 0.4, whoosh: 0.28, emptyClick: 0.3, clink: 0.25,
   shatter: 2.0, alarm: 0.9, chainGrind: 0.9, gateOpen: 0.85, chime: 0.08, swell: 0.3, grab: 0.85, ending: 0.32,
 };
@@ -77,10 +77,16 @@ const _up = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _v = new THREE.Vector3();
 
+const finitePos = (p) => !!p && Number.isFinite(p.x) && Number.isFinite(p.z) && (p.y == null || Number.isFinite(p.y));
+
+// World position of a snatcher's head (getHeadPos(out) per the AI contract, else position + 1.9 m).
 function headOf(enemy, out) {
-  if (enemy?.getHeadPos) return enemy.getHeadPos(out);
+  if (enemy?.getHeadPos) {
+    const r = enemy.getHeadPos(out) || out;
+    return finitePos(r) ? (r === out ? out : out.set(r.x, r.y ?? 1.9, r.z)) : null;
+  }
   const p = enemy?.position;
-  return p ? out.set(p.x, (p.y || 0) + 1.9, p.z) : null;
+  return finitePos(p) ? out.set(p.x, (p.y || 0) + 1.9, p.z) : null;
 }
 
 export class AudioEngine {
@@ -147,23 +153,44 @@ export class AudioEngine {
     on('gate:open', (e) => this.play('gateOpen', {}, { pos: e.pos, ref: 4, gain: LEVEL.gateOpen, send: 0.6, vast: 0.2, priority: 6 }));
     on('game:checkpoint', () => this.play('chime', {}, { bus: 'music', gain: LEVEL.chime, send: 0.6, priority: 4 }));
     on('zone:enter', (e) => this.onZone(e));
+    // Only when the game will actually accept the catch (it ignores player:caught in god mode and
+    // outside 'playing', e.g. a snatcher still reaching the player after game:won).
     on('player:caught', () => {
-      if (!this.game.god) this.onCaught();
+      const s = this.game.state;
+      if (!this.game.god && (s === 'playing' || s === 'caught')) this.onCaught();
     });
     on('game:won', () => this.onWon());
     on('game:state', (e) => this.onState(e));
     on('game:respawn', () => this.onRespawn());
 
     // Browsers only allow audio after a user gesture: start (or resume) on the first one, so
-    // ?autostart sessions get sound too. game.begin() also calls init() from its click.
+    // ?autostart sessions get sound too. game.begin() also calls init() from its click. Several
+    // event types because browsers differ in which ones unlock audio (pointerdown is not a user
+    // activation for touch, for instance).
     this.onGesture = () => {
-      if (this.muted || this.failed) return;
-      if (!this.ctx) this.init();
-      else if (this.ctx.state === 'suspended') this.ctx.resume?.().catch(() => {});
+      if (!this.muted && !this.failed) this.init();
+    };
+    // A hidden tab stops requestAnimationFrame, so update() stops booking automation: suspend the
+    // context rather than leave alarms / layers holding their last value.
+    this.hiddenSuspended = false;
+    this.onVisibility = () => {
+      const ctx = this.ctx;
+      if (!ctx || ctx.state === 'closed') return;
+      if (document.hidden) {
+        if (ctx.state === 'running') {
+          this.hiddenSuspended = true;
+          ctx.suspend?.().catch(() => {});
+        }
+      } else if (this.hiddenSuspended) {
+        this.hiddenSuspended = false;
+        ctx.resume?.().catch(() => {});
+      }
     };
     if (typeof window !== 'undefined') {
-      window.addEventListener('pointerdown', this.onGesture, true);
-      window.addEventListener('keydown', this.onGesture, true);
+      for (const type of ['pointerdown', 'pointerup', 'click', 'keydown', 'touchend']) {
+        window.addEventListener(type, this.onGesture, true);
+      }
+      document.addEventListener('visibilitychange', this.onVisibility);
     }
   }
 
@@ -175,7 +202,13 @@ export class AudioEngine {
 
   // Must be called from a user gesture. Creates the context, the mix graph and starts ambience.
   init() {
-    if (this.ctx || this.muted || this.failed) return;
+    if (this.muted || this.failed) return;
+    if (this.ctx) {
+      // Already built: a later gesture may be the one that is allowed to unlock a context that
+      // was created suspended (e.g. on a pointerdown the browser did not count as activation).
+      if (this.ctx.state !== 'running' && this.ctx.state !== 'closed' && !this.hiddenSuspended) this.ctx.resume?.().catch(() => {});
+      return;
+    }
     const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
     if (!AC) {
       this.failed = true;
@@ -355,7 +388,10 @@ export class AudioEngine {
     this.heart.level.gain.value = LEVEL.heart;
 
     for (let i = 0; i < WHISPER_SLOTS; i++) {
-      const chain = this.makeChain({ bus: 'world', gain: 0, pos: { x: 0, y: -100, z: 0 }, ref: 1.5, send: 0.18, hrtf: true });
+      // Gentler rolloff than physical so a whisper still carries over the wind at 10-15 m: it is
+      // the player's main cue that a snatcher is close (about +1 dB at 3 m, +3 dB at 10-20 m
+      // compared with ref 1.5 / rolloff 1).
+      const chain = this.makeChain({ bus: 'world', gain: 0, pos: { x: 0, y: -100, z: 0 }, ref: 2, rolloff: 0.6, send: 0.18, hrtf: true });
       const voice = new WhisperVoice(ctx, chain.input);
       voice.level.gain.value = LEVEL.whisper;
       this.slots.push({ voice, chain, enemy: null, freeAt: 0 });
@@ -438,10 +474,13 @@ export class AudioEngine {
   }
 
   // Moves a positional chain and updates its distance cues (air absorption + reverb send).
+  // Non-finite positions are ignored (setting an AudioParam to NaN throws).
   placeChain(chain, pos, immediate = false) {
-    if (!chain.panner) return;
+    if (!chain.panner || !pos) return;
     const p = chain.panner;
-    chain.pos.set(pos.x, pos.y ?? chain.pos.y, pos.z);
+    const y = pos.y ?? chain.pos.y;
+    if (!Number.isFinite(pos.x) || !Number.isFinite(y) || !Number.isFinite(pos.z)) return;
+    chain.pos.set(pos.x, y, pos.z);
     if (p.positionX) {
       p.positionX.value = chain.pos.x;
       p.positionY.value = chain.pos.y;
@@ -468,8 +507,9 @@ export class AudioEngine {
     if (!pos) return 0;
     _v.set(pos.x - this.listenerPos.x, 0, pos.z - this.listenerPos.z);
     const len = _v.length();
-    if (len < 0.01) return 0;
-    return clamp(_v.dot(_right) / len, -1, 1);
+    if (!(len >= 0.01)) return 0; // also catches NaN
+    const pan = _v.dot(_right) / len;
+    return Number.isFinite(pan) ? clamp(pan, -1, 1) : 0;
   }
 
   // --- voices ----------------------------------------------------------------------------------
@@ -480,8 +520,13 @@ export class AudioEngine {
     const ctx = this.ctx;
     const synth = SYNTHS[name];
     if (!ctx || !synth) return null;
+    // A suspended context (not yet unlocked, tab hidden, interrupted) has a frozen clock: voices
+    // built now would never reach their end time and never be disposed.
+    if (ctx.state !== 'running') return null;
     // While the scene is cut (caught, dead, won) only the fx bus is audible: don't build voices.
     if (this.scene === 0 && route.bus !== 'fx') return null;
+    // A malformed position plays the sound unpositioned rather than throwing.
+    if (route.pos && !finitePos(route.pos)) route = { ...route, pos: null };
     if (route.pos && route.cull && _v.set(route.pos.x, route.pos.y ?? 1, route.pos.z).distanceTo(this.listenerPos) > route.cull) return null;
     const priority = route.priority ?? 3;
     const kind = route.kind ?? name;
@@ -549,13 +594,25 @@ export class AudioEngine {
     v.chain.dispose();
   }
 
+  // A vocal sound from a snatcher. It comes from the snatcher's head: the payload's `pos` may be
+  // what the snatcher noticed (the player, a bottle) rather than where it stands, so it is only a
+  // fallback when no enemy is given.
   enemySound(name, e, route = {}) {
     const enemy = e.enemy;
-    const pos = e.pos ? _v.set(e.pos.x, (e.pos.y ?? 0) < 0.5 ? 1.9 : e.pos.y, e.pos.z) : headOf(enemy, _v);
+    let pos = headOf(enemy, _v);
+    if (!pos && finitePos(e.pos)) pos = _v.set(e.pos.x, (e.pos.y ?? 0) < 0.5 ? 1.9 : e.pos.y, e.pos.z);
     if (!pos) return null;
     return this.play(name, {}, {
       bus: 'world', pos: { x: pos.x, y: pos.y, z: pos.z }, follow: enemy, gain: LEVEL[name], priority: 5, cull: 70, ...route,
     });
+  }
+
+  // Clock for the safety timeouts that stand in for a missing alarm:end / call:end. It is the
+  // game's simulated time, which (like the level's alarms and the leviathan's call timer) stops
+  // while paused, so a long pause does not cut an alarm that is still going in the game.
+  gameTime() {
+    const t = this.game.time;
+    return Number.isFinite(t) ? t : this.ctx.currentTime;
   }
 
   debounce(key, seconds) {
@@ -568,23 +625,32 @@ export class AudioEngine {
   // --- event handlers --------------------------------------------------------------------------
 
   onFootfall(e) {
-    const I = clamp(e.intensity ?? 0.5, 0, 1);
+    const I = Number.isFinite(e.intensity) ? clamp(e.intensity, 0, 1) : 0.5;
+    // The boom travels through air at ~343 m/s: a far footfall is felt (camera shake, dust) before
+    // it is heard, like thunder, which sells the distance. Near ones stay in sync with the shake.
+    const L = this.listenerPos;
+    const dist = finitePos(e.pos) ? Math.hypot(e.pos.x - L.x, e.pos.z - L.z) : 0;
     this.play('footfall', { intensity: I }, {
       bus: 'levi', gain: LEVEL.footfall * (0.12 + 0.88 * I ** 1.2), pan: this.panOf(e.pos) * 0.6,
       send: 0.12, vast: 0.35 + 0.3 * (1 - I), priority: 8, kind: 'footfall', maxKind: 3,
+      delay: clamp((dist - 40) / 343, 0, 1),
     });
     if (I > 0.6) this.ring = Math.max(this.ring, (I - 0.6) * 0.5);
   }
 
   onCallStart(e) {
     if (this.won) return;
+    // One call per call: a repeated call:start (re-emitted by mistake) must not restart the moan.
     const now = this.ctx.currentTime;
-    const duration = e.duration ?? CONFIG.leviathan.callDuration ?? 4.6;
-    const pos = e.pos ?? this.game.leviathan?.position;
-    const d = pos ? Math.hypot(pos.x - this.listenerPos.x, pos.z - this.listenerPos.z) : 200;
+    if (this.calling && now - (this.last.get('call') ?? -99) < 2) return;
+    this.last.set('call', now);
+    const d0 = Number(e.duration);
+    const duration = d0 > 0 && d0 < 30 ? d0 : CONFIG.leviathan.callDuration ?? 4.6;
+    const pos = finitePos(e.pos) ? e.pos : this.game.leviathan?.position;
+    const d = finitePos(pos) ? Math.hypot(pos.x - this.listenerPos.x, pos.z - this.listenerPos.z) : 200;
     const near = 1 - smoothstep(60, 450, d);
     this.calling = true;
-    this.callUntil = now + duration + 1.5;
+    this.callUntil = this.gameTime() + duration + 1.5;
     this.applyBuses(0.3);
     this.play('leviathanCall', { duration, brightness: 0.35 + 0.65 * near }, {
       bus: 'levi', gain: LEVEL.call * (0.6 + 0.4 * near), pan: this.panOf(pos) * 0.45,
@@ -635,14 +701,18 @@ export class AudioEngine {
   startAlarm(e) {
     const ctx = this.ctx;
     const id = e.id ?? 'alarm';
+    const d0 = Number(e.duration);
+    const until = this.gameTime() + (d0 > 0 ? d0 : 14) + 2;
     if (this.alarms.has(id)) {
-      this.alarms.get(id).until = ctx.currentTime + (e.duration ?? 14) + 2;
+      this.alarms.get(id).until = until;
       return;
     }
-    const pos = e.pos ?? { x: 0, y: 1, z: 0 };
+    if (ctx.state !== 'running' || this.scene === 0) return;
+    // Without a position the alarm still has to be heard: put it in front of the listener.
+    const pos = finitePos(e.pos) ? e.pos : { x: this.listenerPos.x + _fwd.x * 15, z: this.listenerPos.z + _fwd.z * 15 };
     const chain = this.makeChain({ bus: 'world', gain: LEVEL.alarm, pos: { x: pos.x, y: 1.0, z: pos.z }, ref: 6, send: 0.5, hrtf: true });
     const voice = new AlarmVoice(ctx, chain.input, ctx.currentTime + 0.02);
-    this.alarms.set(id, { voice, chain, until: ctx.currentTime + (e.duration ?? 14) + 2 });
+    this.alarms.set(id, { voice, chain, until });
   }
 
   stopAlarm(id) {
@@ -724,10 +794,17 @@ export class AudioEngine {
   update(dt) {
     const ctx = this.ctx;
     if (!ctx || ctx.state === 'closed') return;
+    const now = ctx.currentTime;
     try {
-      this.tick(Math.min(0.1, Math.max(0, dt || 0)), ctx.currentTime);
+      this.tick(Math.min(0.1, Math.max(0, dt || 0)), now);
     } catch (err) {
       this.warn(`update: ${err?.message || err}`);
+    }
+    // Kept apart so that a failure above can never stop finished voices from being disposed.
+    try {
+      this.updateVoices(now);
+    } catch (err) {
+      this.warn(`voices: ${err?.message || err}`);
     }
   }
 
@@ -739,13 +816,16 @@ export class AudioEngine {
 
     const live = state === 'playing' || state === 'caught';
     const ambient = live || state === 'title' || state === 'intro';
-    const threatTarget = live ? clamp(game.director?.threat ?? 0, 0, 1) : 0;
+    const rawThreat = Number(game.director?.threat);
+    const threatTarget = live && Number.isFinite(rawThreat) ? clamp(rawThreat, 0, 1) : 0;
+    if (!Number.isFinite(this.threat)) this.threat = 0;
     this.threat = damp(this.threat, threatTarget, threatTarget > this.threat ? 4 : 0.7, dt);
     const chasing = state === 'playing' && (game.director?.chasing ?? 0) > 0;
     this.chase = chasing ? Math.min(1, this.chase + dt / 1.4) : Math.max(0, this.chase - dt / 8);
     this.ring = Math.max(0, this.ring - dt * 0.35);
 
-    if (this.calling && now > this.callUntil) this.onCallEnd();
+    const gameNow = this.gameTime();
+    if (this.calling && gameNow > this.callUntil) this.onCallEnd();
 
     // Slow-changing layer parameters at ~10 Hz.
     this.layerTimer -= dt;
@@ -761,16 +841,25 @@ export class AudioEngine {
     const heartLevel = live ? smoothstep(0.28, 0.85, tension) : 0;
     this.heart.schedule(now, LOOKAHEAD, 62 + 78 * smoothstep(0.3, 1, tension), heartLevel);
 
-    this.updateWhispers(now, state);
-    if (ambient && !this.won) {
-      this.updateAmbient(now);
-      this.updateLeviathan(now);
-    }
     for (const [id, a] of this.alarms) {
       a.voice.schedule(now, LOOKAHEAD);
-      if (now > a.until) this.stopAlarm(id);
+      if (gameNow > a.until) this.stopAlarm(id);
     }
-    this.updateVoices(now);
+    // These read other modules' objects (snatchers, leviathan): isolate them so bad data there
+    // cannot stop the rest of the engine.
+    this.guard('whispers', () => this.updateWhispers(now, state));
+    if (ambient && !this.won) {
+      this.updateAmbient(now);
+      this.guard('leviathan', () => this.updateLeviathan(now));
+    }
+  }
+
+  guard(label, fn) {
+    try {
+      fn();
+    } catch (err) {
+      this.warn(`${label}: ${err?.message || err}`);
+    }
   }
 
   updateListener() {
@@ -778,6 +867,7 @@ export class AudioEngine {
     if (!cam) return;
     const l = this.ctx.listener;
     const p = cam.position;
+    if (!finitePos(p)) return;
     _fwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
     _up.set(0, 1, 0).applyQuaternion(cam.quaternion);
     _right.crossVectors(_fwd, _up).normalize();

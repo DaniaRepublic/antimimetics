@@ -166,6 +166,8 @@ export class ChaseLayer extends Layer {
     super(ctx, out);
     const b = this.b;
     const t = ctx.currentTime;
+    // Randomly detuned saws can line up past full scale at top intensity: soft-limit the sum.
+    const lim = b.limiter(0.92, this.level);
     const cluster = b.gain(1);
     for (const f of [55, 58.27, 82.41, 87.31, 116.54, 123.47]) {
       b.chain(b.osc('sawtooth', f, t, null, rand(-6, 6)), b.gain(0.16), cluster);
@@ -174,14 +176,14 @@ export class ChaseLayer extends Layer {
     this.pulseVca = b.gain(0.45);
     this.pulse = b.osc(throbWave(ctx), 1.5, t);
     b.chain(this.pulse, b.gain(0.55), this.pulseVca.gain);
-    b.chain(cluster, this.lp, this.pulseVca, this.level);
+    b.chain(cluster, this.lp, this.pulseVca, lim);
     b.chain(b.osc('sine', 41.2, t), b.gain(0.4), this.pulseVca);
 
     const hi = b.gain(0.55);
     b.chain(b.osc('square', 9.5, t), b.gain(0.4), hi.gain);
     for (const f of [880, 932.33, 1318.5]) b.chain(b.osc('sawtooth', f, t, null, rand(-10, 10)), b.gain(0.2), hi);
     this.hiGain = b.gain(0);
-    b.chain(hi, b.filter('bandpass', 1900, 1.2), this.hiGain, this.level);
+    b.chain(hi, b.filter('bandpass', 1900, 1.2), this.hiGain, lim);
   }
 
   set(intensity, now) {

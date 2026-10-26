@@ -164,6 +164,18 @@ async function gameRun() {
 
   // (b) full run
   const h = await launch({ html: 'dist/index.html', query: 'autostart' });
+  // This is an audio test: freeze the AI and the leviathan so that, once the real modules are
+  // merged, snatchers don't chase / catch the player and the leviathan doesn't call on its own in
+  // the middle of an assertion. Threat / chasing are then pinned as own data properties (shadowing
+  // a getter if the real Director uses one) and only change when the test sets them.
+  await h.eval(() => {
+    const g = window.__game;
+    g.director.update = () => {};
+    if (g.leviathan) g.leviathan.update = () => {};
+    window.__pin = (k, v) => Object.defineProperty(g.director, k, { value: v, writable: true, configurable: true, enumerable: true });
+    window.__pin('threat', 0);
+    window.__pin('chasing', 0);
+  });
   const warnings = () => h.logs.filter((l) => l.includes('[audio]'));
   const stats = () => h.eval(() => window.__game.audio.stats());
   const initInfo = await h.eval(() => {
@@ -251,24 +263,18 @@ async function gameRun() {
   await h.eval(() => window.__game.resume());
   await h.eval(() => {
     const g = window.__game;
-    g.director.threat = 0.9;
-    g.director.chasing = 1;
-    // simulate() runs at a fixed step whatever the headless frame rate; keep the stub director's
-    // threat pinned since a real director recomputes it every tick
-    for (let i = 0; i < 60; i++) {
-      g.director.threat = 0.9;
-      g.director.chasing = 1;
-      g.simulate(1 / 30);
-    }
+    window.__pin('threat', 0.9);
+    window.__pin('chasing', 1);
+    // simulate() runs at a fixed step whatever the headless frame rate
+    g.simulate(2);
   });
   await h.page.waitForTimeout(500);
   const chase = await stats();
   console.log('  chasing:', JSON.stringify(chase));
   if (!(chase.chase > 0.5)) fail('chase layer did not rise');
   await h.eval(() => {
-    const g = window.__game;
-    g.director.threat = 0;
-    g.director.chasing = 0;
+    window.__pin('threat', 0);
+    window.__pin('chasing', 0);
   });
 
   // Caught -> dead -> respawn.
@@ -306,12 +312,118 @@ async function gameRun() {
   console.log('  update cost:', JSON.stringify(perf));
   if (perf.msPerUpdate > 0.5) fail(`audio.update too slow: ${perf.msPerUpdate} ms`);
 
+  // Robustness / integration edge cases.
+  // (1) Vocal sounds come from the snatcher even when `pos` is what it noticed (here: the player).
+  const vocal = await h.eval(() => {
+    const g = window.__game;
+    const e = g.director.snatchers[0];
+    g.teleport(e.position.x + 12, e.position.z + 9, 0); // the stimulus (player) is 15 m away
+    const head = e.getHeadPos(g.camera.position.clone());
+    const p = g.player.position;
+    g.bus.emit('enemy:alert', { enemy: e, pos: { x: p.x, y: 0, z: p.z } });
+    const v = g.audio.voices.find((x) => x.kind === 'shriek' && !x.releasing);
+    return v ? { dx: +(v.chain.pos.x - head.x).toFixed(2), dz: +(v.chain.pos.z - head.z).toFixed(2) } : null;
+  });
+  console.log('  shriek placed relative to its snatcher:', JSON.stringify(vocal));
+  if (!vocal || Math.abs(vocal.dx) > 0.5 || Math.abs(vocal.dz) > 0.5) fail('enemy:alert shriek not placed at the snatcher');
+
+  // (2) An alarm keeps wailing through a pause longer than its duration (the level's alarm is
+  // frozen too), and the safety timeout still ends it once play resumes.
+  await h.eval(() => {
+    const g = window.__game;
+    g.bus.emit('alarm:start', { id: 'pause-test', pos: { x: 6, y: 0, z: -10 }, duration: 1 });
+    g.pause();
+  });
+  await h.page.waitForTimeout(4000);
+  const alarmPaused = await h.eval(() => window.__game.audio.alarms.has('pause-test'));
+  // Advance game time deterministically (headless frame rates vary): 3.5 s > duration + 2 s.
+  const alarmAfter = await h.eval(() => {
+    const g = window.__game;
+    g.resume();
+    g.simulate(3.5);
+    return g.audio.alarms.has('pause-test');
+  });
+  console.log(`  alarm through a 4 s pause: kept=${alarmPaused} stopped after resume=${!alarmAfter}`);
+  if (!alarmPaused) fail('alarm was cut while the game was paused');
+  if (alarmAfter) fail('alarm safety timeout did not fire after resume');
+
+  // (3) A suspended context (frozen clock) must not accumulate voices.
+  const susp = await h.eval(async () => {
+    const g = window.__game;
+    const a = g.audio;
+    await a.ctx.suspend();
+    const before = a.voices.length;
+    const e = g.director.snatchers[0];
+    for (let i = 0; i < 200; i++) {
+      g.bus.emit('player:pickup', { type: 'bottle', count: 1 });
+      g.bus.emit('enemy:lost', { enemy: e });
+      g.bus.emit('player:throw', { pos: g.player.position });
+      a.update(1 / 60);
+    }
+    const after = a.voices.length;
+    await a.ctx.resume();
+    return { before, after };
+  });
+  console.log('  events while suspended:', JSON.stringify(susp));
+  if (susp.after > susp.before) fail(`voices built while the context was suspended: ${susp.before} -> ${susp.after}`);
+
+  // (4) Hidden tab suspends the context; visible again resumes it.
+  const vis = await h.eval(async () => {
+    const a = window.__game.audio;
+    const set = (hidden) => {
+      Object.defineProperty(document, 'hidden', { value: hidden, configurable: true });
+      Object.defineProperty(document, 'visibilityState', { value: hidden ? 'hidden' : 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    // state changes are asynchronous (and slow under SwiftShader load): poll for up to 3 s
+    const until = async (want) => {
+      for (let i = 0; i < 30 && a.ctx.state !== want; i++) await new Promise((r) => setTimeout(r, 100));
+      return a.ctx.state;
+    };
+    set(true);
+    const hidden = await until('suspended');
+    set(false);
+    const visible = await until('running');
+    return { hidden, visible };
+  });
+  console.log('  visibility:', JSON.stringify(vis));
+  if (vis.hidden !== 'suspended' || vis.visible !== 'running') fail(`hidden tab handling: ${JSON.stringify(vis)}`);
+
+  // (5) Malformed payloads and a NaN threat must not throw or stall the engine.
+  const bad = await h.eval(() => {
+    const g = window.__game;
+    const N = { x: NaN, y: 0, z: NaN };
+    g.bus.emit('leviathan:footfall', { pos: N, intensity: NaN });
+    g.bus.emit('leviathan:footfall', {});
+    g.bus.emit('enemy:step', { pos: N, chasing: true });
+    g.bus.emit('enemy:alert', { pos: N });
+    g.bus.emit('bottle:shatter', { pos: N });
+    g.bus.emit('gate:open', {});
+    g.bus.emit('alarm:start', { id: 'bad', duration: 'x' });
+    g.bus.emit('alarm:end', { id: 'bad' });
+    window.__pin('threat', NaN);
+    g.simulate(1);
+    window.__pin('threat', 0);
+    g.simulate(0.5);
+    return { threat: g.audio.threat, voices: g.audio.voices.length };
+  });
+  console.log('  malformed payloads:', JSON.stringify(bad));
+  if (!Number.isFinite(bad.threat)) fail('NaN threat poisoned the audio engine');
+
   // Win.
   await h.eval(() => window.__game.win());
   await h.page.waitForTimeout(2500);
   const won = await stats();
   console.log('  won:', JSON.stringify(won));
   if (won.scene !== 0) fail('win did not fade the city');
+  // A snatcher reaching the player after the win: the game ignores it, so must the audio.
+  const lateCatch = await h.eval(() => {
+    const g = window.__game;
+    g.bus.emit('player:caught', { enemy: g.director.snatchers[0] });
+    return { state: g.state, grab: g.audio.voices.some((v) => v.kind === 'grab' && !v.releasing) };
+  });
+  console.log('  player:caught after win:', JSON.stringify(lateCatch));
+  if (lateCatch.grab) fail('grab played after the game was won');
 
   if (warnings().length) fail(`audio warnings:\n${warnings().join('\n')}`);
   if (h.errors.length) fail(`page errors:\n${h.errors.join('\n')}`);
@@ -328,7 +440,12 @@ async function levels() {
   await h.eval(() => {
     const g = window.__game;
     g.audio.init();
-    if (g.leviathan) g.leviathan.callTimer = 1e9;
+    // Measure sounds in isolation: no leviathan calls/footfalls, no AI acting on its own.
+    if (g.leviathan) g.leviathan.update = () => {};
+    g.director.update = () => {};
+    window.__pin = (k, v) => Object.defineProperty(g.director, k, { value: v, writable: true, configurable: true, enumerable: true });
+    window.__pin('threat', 0);
+    window.__pin('chasing', 0);
     g.teleport(0, 0, 0);
     window.__measure = (secs) => new Promise((resolve) => {
       const out = [];
@@ -384,13 +501,11 @@ async function levels() {
   for (const [label, ev, payload, count, gap] of scenarios) {
     const r = await h.eval(async ([ev, payload, count, gap]) => {
       const g = window.__game;
-      const enemy = g.director.snatchers[0];
-      // park the stub snatcher where the sound comes from (enemy sounds follow their emitter)
-      enemy.update = () => {};
-      if (payload.pos) enemy.position.set(payload.pos.x, 0, payload.pos.z);
+      // No `enemy` in the payload: snatcher sounds then come from `pos` (with an enemy they
+      // follow its head, which a real snatcher model would not move when parked by hand).
       const m = window.__measure(gap * count + (ev.startsWith('leviathan:call') ? 8 : 3));
       for (let i = 0; i < count; i++) {
-        g.bus.emit(ev, { ...payload, enemy });
+        g.bus.emit(ev, { ...payload });
         await new Promise((r2) => setTimeout(r2, gap * 1000));
       }
       if (ev === 'leviathan:call:start') setTimeout(() => g.bus.emit('leviathan:call:end', {}), 4600);
@@ -411,15 +526,12 @@ async function levels() {
   await h.page.waitForTimeout(800);
   const chase = await h.eval(async () => {
     const g = window.__game;
-    const id = setInterval(() => {
-      g.director.threat = 0.95;
-      g.director.chasing = 1;
-    }, 16);
+    window.__pin('threat', 0.95);
+    window.__pin('chasing', 1);
     await new Promise((r) => setTimeout(r, 3000));
     const m = await window.__measure(4);
-    clearInterval(id);
-    g.director.threat = 0;
-    g.director.chasing = 0;
+    window.__pin('threat', 0);
+    window.__pin('chasing', 0);
     return m;
   });
   console.log('chase layer + heartbeat'.padEnd(34), JSON.stringify(chase));
@@ -428,13 +540,19 @@ async function levels() {
   const whisper = await h.eval(async () => {
     const g = window.__game;
     const s = g.director.snatchers[0];
-    const saved = s.update;
-    s.update = () => {};
     const cam = g.camera.position;
+    const saved = { x: s.position.x, z: s.position.z, state: s.state };
+    // Park it by hand (the director is frozen); its head is overridden too, since a real model's
+    // head anchor would stay where the model was last updated.
+    const ownHead = Object.getOwnPropertyDescriptor(s, 'getHeadPos');
     s.position.set(cam.x, 0, cam.z - 3);
+    s.getHeadPos = (out) => out.set(cam.x, 1.9, cam.z - 3);
     s.state = 'patrol';
     const m = await window.__measure(8);
-    s.update = saved;
+    if (ownHead) Object.defineProperty(s, 'getHeadPos', ownHead);
+    else delete s.getHeadPos;
+    s.position.set(saved.x, 0, saved.z);
+    s.state = saved.state;
     return { ...m, whispering: g.audio.stats().whispering };
   });
   console.log('whisper 3 m (patrol)'.padEnd(34), JSON.stringify(whisper));
