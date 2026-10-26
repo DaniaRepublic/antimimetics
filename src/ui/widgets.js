@@ -363,6 +363,8 @@ export class BottleCounter {
   }
 }
 
+const CARD_IN = 1.2, CARD_HOLD = 4, CARD_OUT = 1.8, CARD_TOTAL = CARD_IN + CARD_HOLD + CARD_OUT;
+
 /** Big letter-spaced zone name + objective, fades in and out on zone:enter. */
 export class ZoneCard {
   constructor(parent) {
@@ -372,6 +374,7 @@ export class ZoneCard {
     el('div', 'wic-rule wic-zone__rule', this.el);
     this.obj = el('div', 'wic-zone__obj', this.el);
     this.t = -1;
+    this.rate = 1;
   }
 
   show(zone, index, total) {
@@ -382,6 +385,15 @@ export class ZoneCard {
     setText(this.obj, obj);
     setStyle(this.obj, 'display', obj ? 'block' : 'none');
     this.t = 0;
+    this.rate = 1;
+  }
+
+  // Get out of the way quickly (spotted): fade out from the current opacity, fast.
+  dismiss() {
+    if (this.t < 0) return;
+    const a = envelope(this.t, CARD_IN, CARD_HOLD, CARD_OUT);
+    this.t = Math.max(this.t, CARD_IN + CARD_HOLD + (1 - a) * CARD_OUT);
+    this.rate = 3;
   }
 
   hide() {
@@ -391,14 +403,13 @@ export class ZoneCard {
 
   update(dt) {
     if (this.t < 0) return;
-    this.t += dt;
-    const total = 1.2 + 4 + 1.8;
-    if (this.t >= total) {
+    this.t += dt * this.rate;
+    if (this.t >= CARD_TOTAL) {
       this.hide();
       return;
     }
-    setStyle(this.el, 'opacity', envelope(this.t, 1.2, 4, 1.8));
-    const spacing = 0.3 + 0.12 * smoothstep(0, total, this.t);
+    setStyle(this.el, 'opacity', envelope(this.t, CARD_IN, CARD_HOLD, CARD_OUT));
+    const spacing = 0.3 + 0.12 * smoothstep(0, CARD_TOTAL, this.t);
     setStyle(this.name, 'letterSpacing', `${spacing.toFixed(3)}em`);
     setStyle(this.name, 'marginRight', `${(-spacing).toFixed(3)}em`);
   }
@@ -422,6 +433,10 @@ export class MessageToasts {
     const auto = clamp(2.2 + t.length * 0.045, 3, 7);
     this.queue.push({ text: t, hold: Number.isFinite(duration) && duration > 0 ? duration : auto, t: 0, held: 0, out: 0 });
     if (this.queue.length > 4) this.queue.shift();
+  }
+
+  get busy() {
+    return !!this.current || this.queue.length > 0;
   }
 
   clear() {
@@ -457,11 +472,21 @@ export class MessageToasts {
   }
 }
 
-// First-zone sequence, shown in order, one at a time.
+// First-zone sequence, shown in order, one at a time. A step whose action the player has
+// already performed (`learned`) is skipped without being shown.
 const SEQUENCE = [
-  { id: 'move', ready: (g, s) => s.playTime > 2.5 && (g.level?.currentZone ?? 0) <= 0, done: (g, s) => s.moved > 6, min: 3.5, max: 11 },
-  { id: 'crouch', ready: (g, s) => s.idle > 1.6 && (g.level?.currentZone ?? 0) <= 1, done: (g) => !!g.player?.crouched, min: 3, max: 12 },
-  { id: 'throw', ready: (g, s) => s.idle > 1.2 && (g.player?.bottles ?? 0) > 0, done: (g, s) => s.thrown, min: 3.5, max: 13 },
+  {
+    id: 'move', ready: (g, s) => s.playTime > 2.5 && (g.level?.currentZone ?? 0) <= 0,
+    learned: (g, s) => s.moved > 6, done: (g, s) => s.moved > 6, min: 3.5, max: 11,
+  },
+  {
+    id: 'crouch', ready: (g, s) => s.playTime > 6 && s.idle > 1.6 && (g.level?.currentZone ?? 0) <= 1,
+    learned: (g, s) => s.crouchedOnce, done: (g) => !!g.player?.crouched, min: 3, max: 12,
+  },
+  {
+    id: 'throw', ready: (g, s) => s.idle > 1.2 && (g.player?.bottles ?? 0) > 0,
+    learned: (g, s) => s.thrown, done: (g, s) => s.thrown, min: 3.5, max: 13,
+  },
 ];
 const ALWAYS = () => true;
 const CONTEXTUAL = {
@@ -481,6 +506,8 @@ export class Tutorial {
     this.idle = 0; // seconds since the last hint closed
     this.moved = 0;
     this.thrown = false;
+    this.crouchedOnce = false;
+    this.quiet = 0; // seconds since another text channel (level messages) was last busy
     this.last = null;
   }
 
@@ -499,22 +526,30 @@ export class Tutorial {
     this.enqueue(`zone:${index}`, String(text ?? '').trim(), ZONE_HINT, 3.5);
   }
 
-  update(dt, game) {
+  // busy: another text channel (a level message) is on screen; new hints wait for it so the
+  // player is never handed two pieces of text to read at once.
+  update(dt, game, busy = false) {
     const p = game.player;
     this.playTime += dt;
     if (p?.position) {
       if (this.last) this.moved += Math.hypot(p.position.x - this.last.x, p.position.z - this.last.z);
       this.last = { x: p.position.x, z: p.position.z };
     }
+    if (p?.crouched) this.crouchedOnce = true;
     if (!this.current) this.idle += dt;
+    this.quiet = busy ? 0 : this.quiet + dt;
 
-    const next = SEQUENCE.find((s) => !this.seen.has(s.id));
+    let next = SEQUENCE.find((s) => !this.seen.has(s.id));
+    while (next && !this.current && next.learned(game, this)) {
+      this.seen.add(next.id); // already knows it: don't teach it
+      next = SEQUENCE.find((s) => !this.seen.has(s.id));
+    }
     if (next && !this.current && !this.queue.length && next.ready(game, this)) this.enqueue(next.id, TUTORIAL[next.id], next);
     if ((p?.lightLevel ?? 0) > 0.55 && this.playTime > 5) this.trigger('light');
 
     // A tip that could not be shown soon after its moment has passed is dropped.
     if (this.queue.length) this.queue = this.queue.filter((q) => !q.spec.expires || this.playTime - q.at < q.spec.expires);
-    if (!this.current && this.idle > 0.8) {
+    if (!this.current && this.idle > 0.8 && this.quiet > 0.8) {
       const i = this.queue.findIndex((q) => this.playTime - q.at >= q.delay);
       if (i >= 0) {
         const q = this.queue.splice(i, 1)[0];
@@ -644,7 +679,7 @@ function describe(g) {
       const sp = s?.position;
       const d = sp && pos ? Math.hypot(sp.x - pos.x, sp.z - pos.z) : NaN;
       return { s, d };
-    }).sort((a, b) => (a.d || 1e9) - (b.d || 1e9)).slice(0, 12);
+    }).sort((a, b) => (Number.isFinite(a.d) ? a.d : 1e9) - (Number.isFinite(b.d) ? b.d : 1e9)).slice(0, 24);
     for (const { s, d } of rows) {
       const id = String(s?.id ?? s?.def?.id ?? '?').slice(0, 14).padEnd(14);
       const st = String(s?.state ?? '–').padEnd(11);

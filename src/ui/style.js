@@ -64,8 +64,10 @@ const CSS = `
 .wic-layer.is-on { opacity: 1; }
 #wic-hud[data-state="caught"] .wic-layer { transition-duration: 0.2s; }
 
+/* Own compositor layer: its opacity changes every frame during a chase and the inset blur is
+   expensive to re-rasterise at full screen. */
 .wic-edge {
-  position: absolute; inset: 0; opacity: 0;
+  position: absolute; inset: 0; opacity: 0; will-change: opacity;
   background:
     radial-gradient(ellipse 72% 66% at 50% 50%, rgba(140, 8, 0, 0) 40%, rgba(170, 14, 4, 0.45) 72%, rgba(120, 2, 0, 0.92) 100%);
   box-shadow: inset 0 0 90px 10px rgba(200, 20, 6, 0.55);
@@ -200,6 +202,8 @@ const CSS = `
   transition: opacity 0.7s ease, visibility 0s linear 0.7s;
 }
 .wic-screen.is-on { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 0.7s ease; }
+/* Hidden screens keep their nodes; stop their looping animations from ticking during play. */
+.wic-screen:not(.is-on) *, .wic-screen:not(.is-on) *::before, .wic-screen:not(.is-on) *::after { animation-play-state: paused; }
 
 /* title */
 .wic-title { cursor: pointer; }

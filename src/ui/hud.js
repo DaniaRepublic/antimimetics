@@ -14,12 +14,6 @@ const STEP_NOISE = {
   sprint: [CONFIG.noise.sprintStep, 0.95],
 };
 
-// Lub-dub envelope (0..1) for the chase glow, ~80 bpm.
-function heartbeat(t) {
-  const ph = (t % 0.75) / 0.75;
-  return Math.max(Math.exp(-ph * 14), 0.7 * Math.exp(-Math.abs(ph - 0.22) * 20));
-}
-
 // All DOM UI over the canvas: the screens for every game state plus the in-game HUD.
 // The root never takes pointer events; only visible menu screens do.
 export class Hud {
@@ -78,6 +72,7 @@ export class Hud {
     bus.on('enemy:alert', (e) => {
       this.ring.flash(e?.enemy);
       this.edgeFlash = 1;
+      this.zoneCard.dismiss(); // the chase arcs sweep the upper screen; clear the title text
       this.tutorial.trigger('chase');
     });
     bus.on('game:respawn', () => this.onRespawn());
@@ -180,6 +175,8 @@ export class Hud {
     this.eye.reset();
     this.cross.reset();
     this.tutorial.reset();
+    // A card frozen mid-fade by the caught/dead screens would otherwise ghost back in.
+    this.zoneCard.hide();
     setStyle(this.edge, 'opacity', 0);
   }
 
@@ -207,7 +204,9 @@ export class Hud {
     const chasing = (g.director?.chasing || 0) > 0 || indicators.some((i) => i?.state === 'chase');
     this.edgeLevel = damp(this.edgeLevel, chasing ? 1 : 0, chasing ? 2.5 : 0.9, dt);
     this.edgeFlash = Math.max(0, this.edgeFlash - dt * 1.4);
-    const glow = this.edgeLevel * (0.55 + 0.45 * heartbeat(this.time)) + this.edgeFlash * 0.45;
+    // Steady, not pulsing: the atmosphere's post pass already beats the screen edges with a
+    // threat-driven heartbeat, and a second rhythm on the same edges would fight it.
+    const glow = this.edgeLevel * 0.7 + this.edgeFlash * 0.4;
     setStyle(this.edge, 'opacity', glow < 0.005 ? 0 : clamp(glow, 0, 1));
 
     this.cross.update(dt, player);
@@ -215,7 +214,7 @@ export class Hud {
     this.bottles.update(dt, player?.bottles ?? 0);
     this.zoneCard.update(dt);
     this.messages.update(dt);
-    this.tutorial.update(dt, g);
+    this.tutorial.update(dt, g, this.messages.busy);
     this.rec.update(dt, g);
     this.notice.update(dt);
   }

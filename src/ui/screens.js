@@ -11,6 +11,8 @@ import { formatClock } from './widgets.js';
 export const RESUME_DELAY = 1.2;
 export const RETRY_DELAY = 1.1;
 
+const SLIDER_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+
 function controlsList(parent) {
   const list = el('ul', 'wic-controls', parent);
   for (const [keys, label] of CONTROLS) {
@@ -47,6 +49,9 @@ class Screen {
   hide() {
     this.visible = false;
     this.el.classList.remove('is-on');
+    // A button or slider left focused would swallow Space/Enter/arrows once play resumes.
+    const active = document.activeElement;
+    if (active && active !== document.body && this.el.contains(active)) active.blur?.();
   }
 
   update() {}
@@ -172,6 +177,10 @@ export class PauseScreen extends Screen {
       value.textContent = format(v);
       input.style.setProperty('--p', `${(((v - min) / (max - min)) * 100).toFixed(1)}%`);
     };
+    // The game's input layer cancels arrow keys at window level; keep them for a focused slider.
+    input.addEventListener('keydown', (e) => {
+      if (SLIDER_KEYS.has(e.code) && this.game.state === 'paused') e.stopPropagation();
+    });
     input.addEventListener('input', () => {
       const v = clamp(parseFloat(input.value), min, max);
       paint(v);

@@ -2,15 +2,25 @@
 // toasts, ripples...) at desktop and phone sizes, then drives the click flow
 // title -> intro -> playing -> paused -> playing -> dead -> playing. Fails on any console error.
 //
-//   node tools/check-hud.mjs [--no-build] [--out dist/shots/hud] [--only desktop|phone]
+//   node tools/check-hud.mjs [--no-build] [--out dist/shots/hud] [--only desktop|phone] [--query quality=0]
+//
+// --query appends URL params to every page (e.g. quality=0 to speed up SwiftShader once the
+// real atmosphere is merged; frames of the full scene can take seconds each headless).
 import { execSync } from 'node:child_process';
-import { launch } from './harness.mjs';
+import { launch as rawLaunch } from './harness.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n, d) => (args.includes(n) ? args[args.indexOf(n) + 1] : d);
 const out = opt('--out', 'dist/shots/hud');
 const only = opt('--only', null);
+const extra = opt('--query', '');
 if (!args.includes('--no-build')) execSync('node build.mjs', { stdio: 'inherit' });
+
+async function launch(o) {
+  const h = await rawLaunch({ ...o, query: [o.query, extra].filter(Boolean).join('&'), timeout: 180000 });
+  h.page.setDefaultTimeout(180000);
+  return h;
+}
 
 const VIEWPORTS = [
   { name: 'desktop', width: 1280, height: 720 },
@@ -23,8 +33,15 @@ const check = (ok, msg) => {
   console.log(`${ok ? '  ok ' : 'FAIL '} ${msg}`);
 };
 
-// Wait for real frames so CSS transitions settle.
-const settle = (h, ms = 900) => h.page.waitForTimeout(ms);
+// Wait for real frames so CSS transitions settle (slow SwiftShader frames can leave a 0.2 s
+// transition mid-way after a fixed wait, which shows up as ghost UI in the screenshot).
+async function settle(h, ms = 900) {
+  await h.page.waitForTimeout(ms);
+  await h.page.waitForFunction(
+    () => !document.getAnimations().some((a) => a instanceof CSSTransition && a.playState === 'running'),
+    null, { timeout: 15000 },
+  ).catch(() => {});
+}
 
 async function screens(vp) {
   const h = await launch({ html: 'dist/index.html', query: 'mute', width: vp.width, height: vp.height });
@@ -222,8 +239,15 @@ async function flow() {
   await h.page.mouse.click(1000, 360);
   check((await state()) === 'paused', 'clicking the backdrop does not resume');
   await waitStateTime(1.25);
+  // The input layer cancels arrow keys at window level; a focused slider must still take them.
+  const fov0 = await h.eval(() => window.__game.settings.fov);
+  await h.page.focus('.wic-pause .wic-slider:nth-of-type(3) .wic-range');
+  await h.page.keyboard.press('ArrowRight');
+  const fov1 = await h.eval(() => window.__game.settings.fov);
+  check(fov1 === Math.min(95, fov0 + 1), `arrow keys adjust a focused slider (fov ${fov0} -> ${fov1})`);
   await h.page.click('.wic-pause .wic-btn');
   check((await state()) === 'playing', 'resume button -> playing');
+  check(await h.eval(() => !document.querySelector('.wic-pause').contains(document.activeElement)), 'no pause control keeps focus after resuming');
   await h.eval(() => {
     const g = window.__game;
     g.caughtBy = g.director.snatchers[0] || null;
@@ -242,11 +266,84 @@ async function flow() {
   await h.close();
 }
 
+// Tutorial pacing: hints wait for level messages and skip what the player already did.
+async function tutorial() {
+  console.log('\n[tutorial]');
+  const h = await launch({ html: 'dist/index.html', query: 'mute', width: 1280, height: 720 });
+  const tut = () => h.eval(() => {
+    const el = document.querySelector('.wic-tut');
+    return { text: el.textContent, op: Number(el.style.opacity || 0) };
+  });
+  // Shown hint texts while simulating `seconds`.
+  const watch = (seconds) => h.eval((s) => {
+    const g = window.__game;
+    const texts = new Set();
+    for (let t = 0; t < s; t += 0.25) {
+      g.simulate(0.25);
+      const el = document.querySelector('.wic-tut');
+      if (Number(el.style.opacity || 0) > 0.3) texts.add(el.textContent);
+    }
+    return [...texts];
+  }, seconds);
+  await h.eval(() => {
+    const g = window.__game;
+    g.setState('playing');
+    g.player.bottles = 0;
+    g.bus.emit('level:message', { text: 'SOMETHING IS WRITTEN ON THE WALL', duration: 3 });
+  });
+  let shown = await watch(3.5);
+  check(shown.length === 0, `no tutorial hint while a level message is on screen (${shown.join(' | ') || '-'})`);
+  await h.eval(() => window.__game.simulate(4.5));
+  let t = await tut();
+  check(/move/.test(t.text) && t.op > 0.5, `move hint follows once the message is gone (${t.text})`);
+  // The player walks and crouches before the crouch hint's turn: it is skipped, throw comes next.
+  await h.eval(() => {
+    const g = window.__game;
+    g.teleport(0, -8, 0);
+    g.player.crouched = true;
+    g.simulate(0.2);
+    g.player.crouched = false;
+    g.player.bottles = 1;
+  });
+  shown = await watch(14);
+  check(!shown.some((s) => /crouch/.test(s)), `crouch hint skipped once the player has crouched (${shown.join(' | ')})`);
+  check(shown.some((s) => /throw/.test(s)), 'throw hint shown when holding a bottle');
+  // Zone card: steps aside when the player is spotted, never ghosts back after a respawn.
+  const card = () => h.eval(() => Number(document.querySelector('.wic-zone').style.opacity || 0));
+  await h.eval(() => {
+    const g = window.__game;
+    g.bus.emit('zone:enter', { index: 1, zone: { name: 'Main Street', objective: 'Get up the street.' } });
+    g.simulate(2);
+  });
+  const before = await card();
+  await h.eval(() => {
+    const g = window.__game;
+    g.bus.emit('enemy:alert', { enemy: { id: 'x' }, pos: g.player.position.clone() });
+    g.simulate(0.7);
+  });
+  const after = await card();
+  check(before > 0.9 && after === 0, `zone card dismissed when spotted (${before} -> ${after})`);
+  await h.eval(() => {
+    const g = window.__game;
+    g.bus.emit('zone:enter', { index: 2, zone: { name: 'The Plaza' } });
+    g.simulate(6);
+    g.bus.emit('game:respawn', { checkpoint: g.checkpoint });
+    g.simulate(0.5);
+  });
+  check((await card()) === 0, 'zone card hidden on respawn');
+  check(h.errors.length === 0, `tutorial: no console errors (${h.errors.length})`);
+  problems.push(...h.errors);
+  await h.close();
+}
+
 for (const vp of VIEWPORTS) {
   await screens(vp);
   await debugOverlay(vp);
 }
-if (!only) await flow();
+if (!only) {
+  await flow();
+  await tutorial();
+}
 
 console.log(`\nscreenshots in ${out}/`);
 if (problems.length) {
