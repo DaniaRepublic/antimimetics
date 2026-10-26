@@ -258,6 +258,36 @@ console.log(JSON.stringify(grabClose));
 check(grabClose.d > 0.3 && grabClose.d < 0.6, `grab at 0.52 m root distance: face ${grabClose.d.toFixed(2)} m from the camera`);
 check(grabClose.rigBack < 0.05, `after the grab the body returns to its root (${grabClose.rigBack.toFixed(3)} m off)`);
 
+// --- respawn straight out of a grab (the root jumps back to its post): the body must snap onto
+// the root on that very update, not glide the grab offset back over the next second.
+const grabRespawn = await h.eval(() => {
+  const g = window.__game;
+  g.setup([{ seed: 1, mode: 'grab', x: 0, z: 0, yaw: Math.PI }]);
+  const had = g.camera.parent;
+  g.scene.add(g.camera);
+  g.camera.position.set(0, 1.65, 0.3);
+  g.camera.updateMatrixWorld();
+  g.advance(1.5);
+  const m = g.models[0].model;
+  const rig = m.root.children[0].position;
+  const during = Math.hypot(rig.x, rig.z);
+  m.root.position.set(25, 0, -40); // respawn: back at its post
+  m.root.updateMatrixWorld();
+  m.update(1 / 30, { mode: 'idle' });
+  const after = Math.hypot(rig.x, rig.z);
+  // a continuing grab is not mistaken for a teleport (the offset stays while it holds on)
+  m.root.position.set(0, 0, 0);
+  m.root.updateMatrixWorld();
+  for (let i = 0; i < 45; i++) m.update(1 / 30, { mode: 'grab' });
+  const held = Math.hypot(rig.x, rig.z);
+  if (had) had.add(g.camera);
+  else g.scene.remove(g.camera);
+  return { during, after, held };
+});
+console.log(JSON.stringify(grabRespawn));
+check(grabRespawn.during > 0.6 && grabRespawn.after === 0, `respawn out of a grab snaps the body onto its root (${grabRespawn.during.toFixed(2)} -> ${grabRespawn.after.toFixed(3)} m)`);
+check(grabRespawn.held > 0.6, `a held grab keeps its offset (${grabRespawn.held.toFixed(2)} m)`);
+
 // --- sleepers: anim.slump sits the figure down; easing it to 0 over 1.5 s gets it up again.
 const slump = await h.eval(() => {
   const g = window.__game;

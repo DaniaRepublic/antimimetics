@@ -612,6 +612,20 @@ function keepGrabDistance(root, rig, animator, dt) {
   rig.position.z += (_grabPush.z - rig.position.z) * k;
 }
 
+// A respawn teleports the root back to its post while the body may still sit up to ~1 m off it
+// from the grab: drop that offset before the animator looks (same teleport test as trackRoot), so
+// the teleport snaps pose and cape onto the root instead of the body gliding back over a second.
+function dropGrabOffsetOnTeleport(rig, animator, dt) {
+  if ((rig.position.x === 0 && rig.position.z === 0) || !animator.hasPrev) return;
+  rig.updateWorldMatrix(true, false);
+  const e = rig.matrixWorld.elements;
+  const rawDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
+  if (Math.hypot(e[12] - animator.prevX, e[14] - animator.prevZ) > teleportDistance(rawDt)) {
+    rig.position.x = 0;
+    rig.position.z = 0;
+  }
+}
+
 // Creates one snatcher. The seed picks the face variant and individual quirks (height, timing).
 export function createSnatcherModel(seed = 1) {
   const seedInt = seedToInt(seed);
@@ -658,6 +672,7 @@ export function createSnatcherModel(seed = 1) {
       return animator.onStep;
     },
     update(dt, anim) {
+      dropGrabOffsetOnTeleport(rig, animator, dt);
       animator.update(dt, anim || {});
       keepGrabDistance(root, rig, animator, dt);
     },

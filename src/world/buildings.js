@@ -192,10 +192,13 @@ export function building(B, spec) {
       B.batch.box('metal', mat(cx, ly - 0.02, lz), 0.3, 0.26, 0.3, COL.darkSteel, { ao: 0, faces: FACE.py });
       B.batch.box('emissive', mat(cx, ly, lz), 0.16, 0.18, 0.16, color(0xffc88a), { ao: 0 });
       const pos = new THREE.Vector3(cx, ly - 0.1, lz);
-      atm.registerLightSource({
+      const handle = atm.registerLightSource({
         pos, color: 0xffa95e, intensity: 22, distance: 11, flicker: 0.12, stealthRadius: 2.5, stealthWeight: 0.4,
       });
       B.glow?.add(pos, 0xffa95e, 0.7, 2.4);
+      // Listed with the level's other gameplay lights (the level map draws their stealth radius);
+      // not self-flickering, so the level never drives it.
+      B.level?.lights?.push({ handle, pos, base: 22, glow: -1, haloBase: 0, seed: 0, self: false, style: 'dying', onFlicker: null });
     }
   }
   if (spec.collider !== false) B.solid(cx, cz, w, d, h - y0, 0, { tag: 'building', y: y0 });
