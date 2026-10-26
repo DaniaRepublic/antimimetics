@@ -2,7 +2,25 @@ import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 
 const GRAVITY = 9.8;
+// Alarm cars are big, obvious targets: a bottle that skims within this much of the body (sides
+// and roof) counts as a hit, so a throw aimed at the car never sails just over the roof.
+const ALARM_PAD = 0.6;
+const ALARM_PAD_Y = 0.9;
 const _dir = new THREE.Vector3();
+
+// The alarm car (collider with data.alarmCar) whose padded box contains p, if any (`skip` excepted).
+function alarmCarAt(world, p, skip = null) {
+  const pad = ALARM_PAD;
+  for (const col of world.query(p.x - pad, p.z - pad, p.x + pad, p.z + pad)) {
+    if (!col.enabled || !col.data?.alarmCar || col === skip) continue;
+    if (p.y > col.maxY + ALARM_PAD_Y) continue;
+    const dx = p.x - col.cx, dz = p.z - col.cz;
+    const lx = col.cos * dx - col.sin * dz;
+    const lz = col.sin * dx + col.cos * dz;
+    if (Math.abs(lx) <= col.hx + pad && Math.abs(lz) <= col.hz + pad) return col;
+  }
+  return null;
+}
 
 function makeBottleGeometry() {
   const pts = [
@@ -43,6 +61,9 @@ export class Projectiles {
       vel: velocity.clone(),
       spin: new THREE.Vector3(Math.random() * 12 - 6, Math.random() * 4, Math.random() * 12 - 6),
       age: 0,
+      // Thrown from right beside an alarm car (crouched behind it as cover): only a real hit on
+      // that car counts, or every throw from there would shatter in your hand and set it off.
+      padSkip: alarmCarAt(this.game.world, origin),
     });
   }
 
@@ -62,7 +83,11 @@ export class Projectiles {
         collider = hit.collider;
       } else {
         p.pos.addScaledVector(p.vel, dt);
-        if (p.pos.y <= 0.03) impact = p.pos.clone().setY(0.03);
+        const car = alarmCarAt(world, p.pos, p.padSkip);
+        if (car) {
+          impact = p.pos.clone().setY(Math.min(p.pos.y, car.maxY));
+          collider = car;
+        } else if (p.pos.y <= 0.03) impact = p.pos.clone().setY(0.03);
       }
       if (impact || p.age > 6) {
         this.shatter(impact || p.pos, collider);

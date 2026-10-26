@@ -30,13 +30,23 @@ export const TUNE = {
   chaseDetour: 25, // metres of path left: beyond this, re-plan at most every chaseDetourRepath s
   chaseDetourRepath: 1.2,
   chaseDetourMove: 6,
-  chaseLead: 0.3, // seconds of player velocity it aims ahead while it can see you
+  chaseLead: 0.3, // seconds of player velocity it aims ahead while it can see you...
+  interceptMax: 1.5, // ...or up to this far ahead to cut you off, when it can reach that point
+  reacquire: 4, // s after a call: a chaser that sees you again resumes at once (no fresh stare)
+  shoutLead: 1.2, // s: a shriek sends the others to where you were heading, not where you were
   searchStartDetection: 0.6,
   searchRadius: 9,
   shoutDetection: 0.5,
   alarm: { speed: 2.4, ringMin: 2.8, ringSpread: 1.4, linger: 3, minStare: 7, occlusion: 0.8 },
   raptureStagger: 0.35,
   rapturePitch: 0.7, // ~40 degrees up
+  raptureRecover: 0.8, // s after the call ends: heads still coming down, blind and deaf
+  // Devouts do nothing but watch the open ground: sharper eyes than a sentry.
+  devoutPerception: 1.5,
+  // Metres, root to player, held through the death cam: the model's lunge brings its face to
+  // ~0.4 m from the camera from here (closer and it clips the near plane).
+  grabRange: [1.08, 1.15],
+  patrolTurnPause: 0.9, // rad: a patrol stops and looks around at turns sharper than this
 };
 
 // Piecewise-linear lookup in a sorted [[x, y], ...] table.
@@ -123,11 +133,21 @@ export class Brain {
     this.idleLookAt = this.game.time + 2 + Math.random() * 4;
     this.twitchAt = this.game.time + 4 + Math.random() * 8;
     this.disappointed = false;
+    this.reacquireUntil = -1;
     this.enterCalm();
   }
 
   get engaged() {
     return !CALM.has(this.state);
+  }
+
+  // After you: chasing or grabbing, or a chaser the call has frozen (or that will take the chase
+  // straight back up if it sees you in the moments after). Checkpoints don't save meanwhile.
+  get hunting() {
+    const st = this.state;
+    if (st === 'chase' || st === 'grab') return true;
+    if (st === 'rapture') return this.resume?.state === 'chase';
+    return st === 'search' && this.game.time < this.reacquireUntil;
   }
 
   get slumpTarget() {
@@ -141,7 +161,7 @@ export class Brain {
     this.phase = phase;
     this.phaseTime = 0;
     this.body.chasing = state === 'chase';
-    this.body.turnMul = state === 'chase' ? 1.6 : state === 'suspicious' ? 0.7 : 1;
+    this.body.turnMul = state === 'chase' ? 1.6 : state === 'grab' ? 3 : state === 'suspicious' ? 0.7 : 1;
   }
 
   setPhase(phase) {
@@ -247,6 +267,7 @@ export class Brain {
       const light = lerp(TUNE.light[0], TUNE.light[1], clamp(Number.isFinite(p.lightLevel) ? p.lightLevel : 0.2, 0, 1));
       rate = curve(TUNE.distanceCurve, this.senseDist) * focus * this.stanceFactor() * light * this.stateFactor() * vis;
     }
+    if (this.kind === 'devout') rate *= TUNE.devoutPerception;
     if (this.senseNear && !p.crouched && (p.mode === 'walk' || p.mode === 'sprint')) rate += TUNE.proximityRate;
     if (this.asleep) rate *= TUNE.sleep.perception;
     if (this.game.time < this.wakeUntil) rate *= 0.5;
@@ -296,6 +317,11 @@ export class Brain {
     if (st === 'chase' || st === 'grab' || st === 'rapture') return;
     if (this.asleep) {
       if (this.detection >= TUNE.suspectAt) this.wake(() => this.enterSuspicious(this.lastSeenPos, { seen: true }));
+      return;
+    }
+    if (seen && st === 'search' && this.game.time < (this.reacquireUntil ?? -1)) {
+      // Hunting you when the call came, and there you are: no second warning.
+      this.enterChase({ resumed: true });
       return;
     }
     if (this.detection >= 1) {
@@ -490,12 +516,16 @@ export class Brain {
     if (this.state !== 'rapture') return;
     const r = this.resume || { state: 'calm' };
     this.resume = null;
+    this.ignoreUntil = Math.max(this.ignoreUntil, this.game.time + TUNE.raptureRecover);
     switch (r.state) {
       case 'chase':
-        // It lost you while it listened: search where it last knew you were.
+        // It lost you while it listened: search where you were heading. If it sees you again
+        // in the next few seconds it picks the chase straight back up.
         this.emit('enemy:lost');
-        this.enterSearch(this.lastSeenPos, { vel: null });
-        this.detection = Math.max(this.detection, 0.6);
+        this.extrapolate(E.loseSightMemory, this.chaseGoal);
+        this.enterSearch(this.chaseGoal, { vel: this.lastSeenVel });
+        this.detection = Math.max(this.detection, 0.8);
+        this.reacquireUntil = this.game.time + TUNE.raptureRecover + TUNE.reacquire;
         break;
       case 'suspicious': this.enterInvestigate(this.stimulus); break;
       case 'investigate': this.enterInvestigate(this.target, { lookTime: r.lookTime }); break;
@@ -672,15 +702,40 @@ export class Brain {
     if (this.stateTime > 75) this.enterReturn();
   }
 
-  enterChase() {
+  enterChase({ resumed = false } = {}) {
     this.asleep = false;
     this.setState('chase');
     this.detection = 1;
     this.repathAt = 0;
+    this.reacquireUntil = -1;
     this.chaseGoal.x = this.lastSeenPos.x;
     this.chaseGoal.z = this.lastSeenPos.z;
-    this.emit('enemy:alert', { pos: this.body.position.clone() });
+    this.emit('enemy:alert', { pos: this.body.position.clone(), resumed });
     this.director?.shout(this.body);
+  }
+
+  // Seconds ahead to aim so as to meet a visible player moving at lastSeenVel (a pursuit that cuts
+  // corners instead of trailing you), capped at TUNE.interceptMax; chaseLead if it can't catch up.
+  interceptTime() {
+    const b = this.body.position;
+    const dx = this.lastSeenPos.x - b.x, dz = this.lastSeenPos.z - b.z;
+    const vx = this.lastSeenVel.x, vz = this.lastSeenVel.z;
+    const s = E.chaseSpeed;
+    const a = vx * vx + vz * vz - s * s;
+    const bb = 2 * (dx * vx + dz * vz);
+    const c = dx * dx + dz * dz;
+    let t = -1;
+    if (Math.abs(a) < 1e-6) t = bb < 0 ? -c / bb : -1;
+    else {
+      const disc = bb * bb - 4 * a * c;
+      if (disc >= 0) {
+        const r = Math.sqrt(disc);
+        const t1 = (-bb - r) / (2 * a), t2 = (-bb + r) / (2 * a);
+        t = Math.min(t1 > 0 ? t1 : Infinity, t2 > 0 ? t2 : Infinity);
+        if (!Number.isFinite(t)) t = -1;
+      }
+    }
+    return t > 0 ? clamp(t, TUNE.chaseLead, TUNE.interceptMax) : TUNE.chaseLead;
   }
 
   // Where it believes the player is `t` seconds after losing sight: last position + velocity,
@@ -727,8 +782,8 @@ export class Brain {
       this.detection = TUNE.searchStartDetection;
       return;
     }
-    // Aim a little ahead of a visible player; extrapolate a vanished one.
-    this.extrapolate(since < 0.2 ? TUNE.chaseLead : since, _a);
+    // Aim where it can meet a visible player; extrapolate a vanished one.
+    this.extrapolate(since < 0.2 ? this.interceptTime() : since, _a);
     const tx = _a.x, tz = _a.z;
     const moved = Math.hypot(tx - this.chaseGoal.x, tz - this.chaseGoal.z);
     // Straight-line pursuit is free, so it updates every frame; A* re-plans are throttled, and on a
@@ -754,13 +809,32 @@ export class Brain {
   enterGrab() {
     this.setState('grab');
     this.body.halt();
+    // Plant the feet at once: the model's own lunge closes the last ~0.6 m, so any momentum
+    // carried into the grab would push its face through the camera.
+    this.body.stopDead();
+    // A head-on catch can land closer than the grab distance: step back to it at once (a few
+    // centimetres, hidden by the death cam's turn), then updateGrab holds it there.
+    const b = this.body, p = this.game.player.position;
+    const dx = p.x - b.position.x, dz = p.z - b.position.z;
+    const d = Math.hypot(dx, dz), min = TUNE.grabRange[0] - 0.08;
+    if (d > 1e-3 && d < min) b.nudge((dx / d) * (d - min), (dz / d) * (d - min));
   }
 
-  updateGrab() {
+  updateGrab(dt) {
     const b = this.body;
     const p = this.game.player;
-    b.face(dirToYaw(p.position.x - b.position.x, p.position.z - b.position.z));
+    const dx = p.position.x - b.position.x, dz = p.position.z - b.position.z;
+    const d = Math.hypot(dx, dz);
+    b.face(dirToYaw(dx, dz));
     b.lookAt(p.position.x, p.position.y + p.eyeHeight, p.position.z, 12);
+    // Hold the root TUNE.grabRange from the player (the player still slides a little as their
+    // momentum dies): straighten up and back off quickly if too close, follow if they drift away.
+    const [near, far] = TUNE.grabRange;
+    if (d > 1e-3 && (d < near || d > far)) {
+      const want = d < near ? near : far;
+      const step = clamp(d - want, -4 * dt, 1.5 * dt);
+      b.nudge((dx / d) * step, (dz / d) * step);
+    }
   }
 
   // God mode: it reaches you and simply stops caring for a while.
@@ -938,8 +1012,15 @@ export class Brain {
     if (this.phase === 'walk') {
       this.calmHead();
       if (b.arrived) {
+        const pause = this.routePause(this.routeIndex);
+        if (pause <= 0) {
+          // A bend in the street, not a destination: walk straight on.
+          this.advanceRoute();
+          this.goRoute();
+          return;
+        }
         b.halt();
-        this.pauseTime = this.def.pause ?? 2;
+        this.pauseTime = pause;
         this.setPhase('pause');
         this.lookTimer = 0.3;
       } else if (b.pathFailed) {
@@ -962,7 +1043,30 @@ export class Brain {
     const i = this.routeIndex;
     const r = this.route[i];
     this.setPhase('walk');
-    this.body.go(r.x, r.z, E.patrolSpeed, 0.4, { cacheKey: `${this.body.id}:${i}` });
+    this.body.go(r.x, r.z, E.patrolSpeed, 0.4, { cacheKey: `${this.body.id}:${i}`, brake: this.routePause(i) > 0 });
+  }
+
+  // How long to stop at waypoint i: its own `pause`, else def.pause where the route turns
+  // sharply or ends (a corner, the end of a beat), else 0 -- it walks through gentle bends.
+  routePause(i) {
+    const route = this.route;
+    const n = route.length;
+    const r = route[i];
+    if (Number.isFinite(r.pause)) return r.pause;
+    const base = this.def.pause ?? 2;
+    if (n < 3) return base;
+    const loop = this.def.loop !== false;
+    let prev, next;
+    if (loop) {
+      prev = route[(i - 1 + n) % n];
+      next = route[(i + 1) % n];
+    } else {
+      if (i === 0 || i === n - 1) return base;
+      prev = route[i - this.routeDir];
+      next = route[i + this.routeDir];
+    }
+    const a = dirToYaw(r.x - prev.x, r.z - prev.z), c = dirToYaw(next.x - r.x, next.z - r.z);
+    return Math.abs(angleDiff(a, c)) > TUNE.patrolTurnPause ? base : 0;
   }
 
   advanceRoute() {
