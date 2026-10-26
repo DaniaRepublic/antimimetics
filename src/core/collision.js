@@ -8,6 +8,11 @@
 //   resolveCircle(pos, radius, opts)    push a vertical capsule out of solid boxes (mutates pos.x / pos.z)
 //   segmentBlocked(a, b, opts)          true if any sight-blocking box intersects segment a->b (3D)
 //   raycast(origin, dir, maxDist, opts) nearest hit {t, point, normal, collider} or null (3D, dir normalized)
+//
+// Dynamic boxes: updateBox(col, {x, z, w, d, h, y, rot}) moves/resizes a box in place (fields left
+// out keep their value) and removeBox(col) deletes one, so moving obstacles (e.g. the leviathan's
+// planted needles) can recycle a few colliders instead of appending a new one every step.
+// NavGrid does not see these changes until rebuildArea() covers them.
 
 export class CollisionWorld {
   constructor(cellSize = 8) {
@@ -16,12 +21,51 @@ export class CollisionWorld {
     this.grid = new Map();
     this.stamp = 1;
     this._tmp = [];
+    this._nextId = 0;
   }
 
   addBox({
     x, z, w, d, h, y = 0, rot = 0,
     blocksMove = true, blocksSight = true, tag = null, data = null,
   }) {
+    const col = {
+      id: this._nextId++,
+      cx: 0, cz: 0, hx: 0, hz: 0, minY: 0, maxY: 0, rot: 0, cos: 1, sin: 0,
+      minX: 0, maxX: 0, minZ: 0, maxZ: 0,
+      blocksMove, blocksSight, enabled: true, tag, data, _stamp: 0,
+    };
+    this._shape(col, x, z, w, d, h, y, rot);
+    this.colliders.push(col);
+    this._insert(col);
+    return col;
+  }
+
+  // Moves / resizes an existing box (same parameters as addBox; omitted ones are kept).
+  updateBox(col, {
+    x = col.cx, z = col.cz, w = col.hx * 2, d = col.hz * 2, h = col.maxY - col.minY, y = col.minY, rot = col.rot,
+  } = {}) {
+    if (!col || col.removed) return col;
+    this._remove(col);
+    this._shape(col, x, z, w, d, h, y, rot);
+    this._insert(col);
+    return col;
+  }
+
+  // Deletes a box from the world (queries and world.colliders). Safe to call twice.
+  removeBox(col) {
+    if (!col || col.removed) return;
+    this._remove(col);
+    col.removed = true;
+    col.enabled = false;
+    const i = this.colliders.indexOf(col);
+    if (i >= 0) this.colliders.splice(i, 1);
+  }
+
+  setEnabled(col, enabled) {
+    col.enabled = enabled;
+  }
+
+  _shape(col, x, z, w, d, h, y, rot) {
     const c = Math.cos(rot);
     const s = Math.sin(rot);
     const hx = w / 2;
@@ -29,22 +73,29 @@ export class CollisionWorld {
     // World-space extents of the rotated rectangle.
     const ex = Math.abs(c) * hx + Math.abs(s) * hz;
     const ez = Math.abs(s) * hx + Math.abs(c) * hz;
-    const col = {
-      id: this.colliders.length,
-      cx: x, cz: z, hx, hz, minY: y, maxY: y + h, rot, cos: c, sin: s,
-      minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez,
-      blocksMove, blocksSight, enabled: true, tag, data, _stamp: 0,
-    };
-    this.colliders.push(col);
-    this._insert(col);
-    return col;
+    col.cx = x;
+    col.cz = z;
+    col.hx = hx;
+    col.hz = hz;
+    col.minY = y;
+    col.maxY = y + h;
+    col.rot = rot;
+    col.cos = c;
+    col.sin = s;
+    col.minX = x - ex;
+    col.maxX = x + ex;
+    col.minZ = z - ez;
+    col.maxZ = z + ez;
   }
 
-  setEnabled(col, enabled) {
-    col.enabled = enabled;
+  // A box with non-finite extents (bad input) stays out of the spatial hash, so it can never be
+  // hit; inserting it would otherwise loop forever (Infinity) or do nothing useful (NaN).
+  static _hashable(col) {
+    return Number.isFinite(col.minX + col.maxX + col.minZ + col.maxZ);
   }
 
   _insert(col) {
+    if (!CollisionWorld._hashable(col)) return;
     const cs = this.cellSize;
     for (let ix = Math.floor(col.minX / cs); ix <= Math.floor(col.maxX / cs); ix++) {
       for (let iz = Math.floor(col.minZ / cs); iz <= Math.floor(col.maxZ / cs); iz++) {
@@ -52,6 +103,24 @@ export class CollisionWorld {
         let cell = this.grid.get(key);
         if (!cell) this.grid.set(key, (cell = []));
         cell.push(col);
+      }
+    }
+  }
+
+  _remove(col) {
+    if (!CollisionWorld._hashable(col)) return;
+    const cs = this.cellSize;
+    for (let ix = Math.floor(col.minX / cs); ix <= Math.floor(col.maxX / cs); ix++) {
+      for (let iz = Math.floor(col.minZ / cs); iz <= Math.floor(col.maxZ / cs); iz++) {
+        const key = ix * 73856093 ^ iz * 19349663;
+        const cell = this.grid.get(key);
+        if (!cell) continue;
+        const i = cell.indexOf(col);
+        if (i >= 0) {
+          cell[i] = cell[cell.length - 1];
+          cell.pop();
+        }
+        if (!cell.length) this.grid.delete(key);
       }
     }
   }

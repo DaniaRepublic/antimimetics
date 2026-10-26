@@ -1,35 +1,43 @@
 // Grid navigation for ground agents: rasterises the CollisionWorld into a walkable grid
-// (obstacles inflated by the agent radius), labels connected regions, and runs A*.
+// (obstacles inflated by the agent radius), labels connected regions, and finds paths.
 //
 //   const nav = new NavGrid(world, { minX, maxX, minZ, maxZ }, { cell: 0.5, agentRadius: 0.45 });
 //   nav.build();
 //   nav.findPath({x, z}, {x, z}) -> [{x, z}, ...]  (smoothed; excludes the start; ends at goal) or null
 //
-// Paths are cheap for short hops (< ~60 m). Call rebuildArea() after toggling colliders (gates).
+// findPath uses Jump Point Search (8-connected, no corner cutting): on this grid a long detour
+// (e.g. round the closed gate through the parking structure, ~150 m) costs well under a
+// millisecond instead of the 7-25 ms plain A* needed. findPathReference() keeps the plain A*
+// (used as a fallback and by tools/perf-nav.mjs). Call rebuildArea() after toggling colliders.
 
 const SQRT2 = Math.SQRT2;
 const NEIGHBOURS = [
   [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
   [1, 1, SQRT2], [1, -1, SQRT2], [-1, 1, SQRT2], [-1, -1, SQRT2],
 ];
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 
+// Binary min-heap of int items keyed by float priorities (parallel typed arrays, grown on demand).
 class MinHeap {
-  constructor() {
-    this.items = [];
-    this.keys = [];
-  }
-  get size() {
-    return this.items.length;
+  constructor(capacity = 1024) {
+    this.items = new Int32Array(capacity);
+    this.keys = new Float64Array(capacity);
+    this.size = 0;
   }
   clear() {
-    this.items.length = 0;
-    this.keys.length = 0;
+    this.size = 0;
   }
   push(item, key) {
+    if (this.size === this.items.length) {
+      const items = new Int32Array(this.size * 2);
+      const keys = new Float64Array(this.size * 2);
+      items.set(this.items);
+      keys.set(this.keys);
+      this.items = items;
+      this.keys = keys;
+    }
     const a = this.items, k = this.keys;
-    let i = a.length;
-    a.push(item);
-    k.push(key);
+    let i = this.size++;
     while (i > 0) {
       const p = (i - 1) >> 1;
       if (k[p] <= key) break;
@@ -43,10 +51,9 @@ class MinHeap {
   pop() {
     const a = this.items, k = this.keys;
     const top = a[0];
-    const lastItem = a.pop();
-    const lastKey = k.pop();
-    const n = a.length;
+    const n = --this.size;
     if (n > 0) {
+      const lastItem = a[n], lastKey = k[n];
       let i = 0;
       for (;;) {
         let c = 2 * i + 1;
@@ -72,17 +79,21 @@ export class NavGrid {
     this.maxObstacleBottom = maxObstacleBottom;
     this.minX = bounds.minX;
     this.minZ = bounds.minZ;
-    this.w = Math.ceil((bounds.maxX - bounds.minX) / cell);
-    this.h = Math.ceil((bounds.maxZ - bounds.minZ) / cell);
+    this.w = Math.max(3, Math.ceil((bounds.maxX - bounds.minX) / cell));
+    this.h = Math.max(3, Math.ceil((bounds.maxZ - bounds.minZ) / cell));
     const n = this.w * this.h;
     this.walk = new Uint8Array(n);
     this.region = new Int32Array(n);
+    this.regionCount = 0;
     this.g = new Float32Array(n);
     this.parent = new Int32Array(n);
     this.seen = new Uint32Array(n);
     this.closed = new Uint32Array(n);
     this.searchId = 0;
     this.heap = new MinHeap();
+    this.stack = new Int32Array(1024);
+    // Counters for tools/perf-*.mjs and the debug overlay.
+    this.stats = { searches: 0, expansions: 0, fallbacks: 0, lastMs: 0, maxMs: 0, totalMs: 0 };
   }
 
   build() {
@@ -145,28 +156,35 @@ export class NavGrid {
     this._labelRegions();
   }
 
+  // Flood-fills 8-connected (no corner cutting) walkable components. Border cells are never
+  // walkable, so neighbour indices of a walkable cell never leave the grid.
   _labelRegions() {
     const { w, h, walk, region } = this;
+    const n = w * h;
     region.fill(-1);
+    let stack = this.stack;
     let next = 0;
-    const stack = [];
-    for (let i = 0; i < w * h; i++) {
+    for (let i = 0; i < n; i++) {
       if (!walk[i] || region[i] >= 0) continue;
       region[i] = next;
-      stack.push(i);
-      while (stack.length) {
-        const c = stack.pop();
-        const cx = c % w;
-        const cz = (c - cx) / w;
-        for (const [dx, dz] of NEIGHBOURS) {
-          const nx = cx + dx, nz = cz + dz;
-          if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
-          const ni = nz * w + nx;
-          if (!walk[ni] || region[ni] >= 0) continue;
-          if (dx && dz && (!walk[cz * w + nx] || !walk[nz * w + cx])) continue;
-          region[ni] = next;
-          stack.push(ni);
+      let top = 0;
+      stack[top++] = i;
+      while (top) {
+        const c = stack[--top];
+        if (top + 8 >= stack.length) {
+          const grown = new Int32Array(stack.length * 2);
+          grown.set(stack);
+          stack = this.stack = grown;
         }
+        const e = walk[c + 1], wv = walk[c - 1], s = walk[c + w], nn = walk[c - w];
+        if (e && region[c + 1] < 0) { region[c + 1] = next; stack[top++] = c + 1; }
+        if (wv && region[c - 1] < 0) { region[c - 1] = next; stack[top++] = c - 1; }
+        if (s && region[c + w] < 0) { region[c + w] = next; stack[top++] = c + w; }
+        if (nn && region[c - w] < 0) { region[c - w] = next; stack[top++] = c - w; }
+        if (e && s && walk[c + w + 1] && region[c + w + 1] < 0) { region[c + w + 1] = next; stack[top++] = c + w + 1; }
+        if (e && nn && walk[c - w + 1] && region[c - w + 1] < 0) { region[c - w + 1] = next; stack[top++] = c - w + 1; }
+        if (wv && s && walk[c + w - 1] && region[c + w - 1] < 0) { region[c + w - 1] = next; stack[top++] = c + w - 1; }
+        if (wv && nn && walk[c - w - 1] && region[c - w - 1] < 0) { region[c - w - 1] = next; stack[top++] = c - w - 1; }
       }
       next++;
     }
@@ -183,7 +201,7 @@ export class NavGrid {
 
   index(x, z) {
     const ix = this.cellX(x), iz = this.cellZ(z);
-    if (ix < 0 || iz < 0 || ix >= this.w || iz >= this.h) return -1;
+    if (!(ix >= 0 && iz >= 0 && ix < this.w && iz < this.h)) return -1; // also rejects NaN
     return iz * this.w + ix;
   }
 
@@ -208,18 +226,24 @@ export class NavGrid {
     return ra >= 0 && ra === this.regionAt(bx, bz);
   }
 
-  // Closest walkable cell centre within maxCells rings (or null).
+  // Closest walkable cell centre within maxCells rings (or null). Visits only each ring's
+  // perimeter, in row-major order (ties resolve exactly as the original full-square scan did).
   nearestWalkable(x, z, maxCells = 20) {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
     const cx = this.cellX(x), cz = this.cellZ(z);
-    for (let r = 0; r <= maxCells; r++) {
+    const { w, h, walk } = this;
+    if (cx >= 0 && cz >= 0 && cx < w && cz < h && walk[cz * w + cx]) return { x, z };
+    for (let r = 1; r <= maxCells; r++) {
       let best = -1, bestD = Infinity;
       for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-          const ix = cx + dx, iz = cz + dz;
-          if (ix < 0 || iz < 0 || ix >= this.w || iz >= this.h) continue;
-          const i = iz * this.w + ix;
-          if (!this.walk[i]) continue;
+        const iz = cz + dz;
+        if (iz < 0 || iz >= h) continue;
+        const edge = dz === -r || dz === r;
+        for (let dx = -r; dx <= r; dx += edge ? 1 : 2 * r) {
+          const ix = cx + dx;
+          if (ix < 0 || ix >= w) continue;
+          const i = iz * w + ix;
+          if (!walk[i]) continue;
           const d = dx * dx + dz * dz;
           if (d < bestD) {
             bestD = d;
@@ -227,7 +251,7 @@ export class NavGrid {
           }
         }
       }
-      if (best >= 0) return r === 0 ? { x, z } : this.centerOf(best);
+      if (best >= 0) return this.centerOf(best);
     }
     return null;
   }
@@ -237,6 +261,7 @@ export class NavGrid {
     const c = this.cell;
     let ix = this.cellX(ax), iz = this.cellZ(az);
     const tx = this.cellX(bx), tz = this.cellZ(bz);
+    if (!Number.isFinite(ix + iz + tx + tz)) return false;
     const dx = bx - ax, dz = bz - az;
     const stepX = dx > 0 ? 1 : -1, stepZ = dz > 0 ? 1 : -1;
     const tDeltaX = dx !== 0 ? Math.abs(c / dx) : Infinity;
@@ -275,31 +300,74 @@ export class NavGrid {
     return ix >= 0 && iz >= 0 && ix < this.w && iz < this.h && this.walk[iz * this.w + ix] === 1;
   }
 
-  // heuristicWeight > 1 trades a little path optimality for far fewer expansions on long detours.
-  findPath(from, to, { maxExpansions = 40000, heuristicWeight = 1.2 } = {}) {
+  // Resolves the endpoints shared by both searches: {s, t, start0, goal0}, a direct hop, or null.
+  _endpoints(from, to) {
+    if (!from || !to) return null;
     const start0 = this.nearestWalkable(from.x, from.z, 6);
     const goal0 = this.nearestWalkable(to.x, to.z, 12);
     if (!start0 || !goal0) return null;
     const s = this.index(start0.x, start0.z);
     const t = this.index(goal0.x, goal0.z);
     if (s < 0 || t < 0 || this.region[s] !== this.region[t]) return null;
-    if (this.lineWalkable(start0.x, start0.z, goal0.x, goal0.z)) return [{ x: goal0.x, z: goal0.z }];
+    if (this.lineWalkable(start0.x, start0.z, goal0.x, goal0.z)) return { direct: [{ x: goal0.x, z: goal0.z }] };
+    return { s, t, start0, goal0 };
+  }
 
+  // Path from `from` to `to` (world {x, z}), or null if unreachable. Same contract as always:
+  // smoothed corner points, excluding the start, ending exactly at the (nearest walkable) goal.
+  // Options: maxExpansions bounds the work (jump points for JPS); heuristicWeight > 1 trades a
+  // little optimality for speed (JPS rarely needs it).
+  findPath(from, to, { maxExpansions = 40000, heuristicWeight = 1 } = {}) {
+    const t0 = performance.now();
+    const ends = this._endpoints(from, to);
+    let out = null;
+    if (ends?.direct) out = ends.direct;
+    else if (ends) {
+      const cells = this._jps(ends.s, ends.t, maxExpansions, heuristicWeight);
+      if (cells) out = this._smooth(cells, ends.start0, ends.goal0);
+      else {
+        // Should not happen within one region; plain A* is the safety net (and honours maxExpansions).
+        this.stats.fallbacks++;
+        const ref = this._astar(ends.s, ends.t, maxExpansions, 1.2);
+        if (ref) out = this._smooth(ref, ends.start0, ends.goal0);
+      }
+    }
+    const ms = performance.now() - t0;
+    const st = this.stats;
+    st.searches++;
+    st.lastMs = ms;
+    st.totalMs += ms;
+    if (ms > st.maxMs) st.maxMs = ms;
+    return out;
+  }
+
+  // The previous plain weighted A* (8-connected, no corner cutting). Same contract as findPath.
+  findPathReference(from, to, { maxExpansions = 40000, heuristicWeight = 1.2 } = {}) {
+    const ends = this._endpoints(from, to);
+    if (!ends) return null;
+    if (ends.direct) return ends.direct;
+    const cells = this._astar(ends.s, ends.t, maxExpansions, heuristicWeight);
+    return cells ? this._smooth(cells, ends.start0, ends.goal0) : null;
+  }
+
+  // Octile distance in cells.
+  _octile(a, b) {
+    const w = this.w;
+    const ax = a % w, bx = b % w;
+    const ddx = Math.abs(ax - bx), ddz = Math.abs((a - ax) / w - (b - bx) / w);
+    return ddx > ddz ? ddx + (SQRT2 - 1) * ddz : ddz + (SQRT2 - 1) * ddx;
+  }
+
+  _astar(s, t, maxExpansions, heuristicWeight) {
     const { w, walk, g, parent, seen, closed, heap } = this;
-    const id = ++this.searchId;
-    const tx = t % w, tz = (t - tx) / w;
-    const hfn = (i) => {
-      const x = i % w, z = (i - x) / w;
-      const ddx = Math.abs(x - tx), ddz = Math.abs(z - tz);
-      return (ddx + ddz) + (SQRT2 - 2) * Math.min(ddx, ddz);
-    };
+    const id = this._nextSearch();
     heap.clear();
     g[s] = 0;
     parent[s] = -1;
     seen[s] = id;
-    heap.push(s, hfn(s));
-    let found = false;
+    heap.push(s, this._octile(s, t));
     let expansions = 0;
+    let found = false;
     while (heap.size) {
       const c = heap.pop();
       if (closed[c] === id) continue;
@@ -311,25 +379,162 @@ export class NavGrid {
       if (++expansions > maxExpansions) break;
       const cx = c % w, cz = (c - cx) / w;
       for (const [dx, dz, cost] of NEIGHBOURS) {
-        const nx = cx + dx, nz = cz + dz;
-        const ni = nz * w + nx;
+        const ni = (cz + dz) * w + cx + dx;
         if (!walk[ni] || closed[ni] === id) continue;
-        if (dx && dz && (!walk[cz * w + nx] || !walk[nz * w + cx])) continue;
+        if (dx && dz && (!walk[cz * w + cx + dx] || !walk[(cz + dz) * w + cx])) continue;
         const ng = g[c] + cost;
         if (seen[ni] !== id || ng < g[ni]) {
           seen[ni] = id;
           g[ni] = ng;
           parent[ni] = c;
-          heap.push(ni, ng + hfn(ni) * heuristicWeight);
+          heap.push(ni, ng + this._octile(ni, t) * heuristicWeight);
         }
       }
     }
+    this.stats.expansions += expansions;
     if (!found) return null;
-
     const cells = [];
     for (let c = t; c !== -1; c = parent[c]) cells.push(c);
-    cells.reverse();
-    // String-pull: keep only the corners needed for straight walkable segments.
+    return cells.reverse();
+  }
+
+  _nextSearch() {
+    if (++this.searchId >= 0xffffffff) {
+      // Generation counters wrapped (after ~4 billion searches): start the marks afresh.
+      this.seen.fill(0);
+      this.closed.fill(0);
+      this.searchId = 1;
+    }
+    return this.searchId;
+  }
+
+  // --- Jump Point Search -------------------------------------------------------------------
+  // Variant for 8-connected moves that never cut a corner (a diagonal step needs both orthogonal
+  // neighbours open): straight jumps stop where a side opens up behind an obstacle; diagonal
+  // jumps stop where either of their straight components finds a jump point.
+
+  // Straight jump from i (exclusive) along (dx, 0) or (0, dz). Returns the jump point or -1.
+  _jumpStraight(i, dx, dz, goal) {
+    const walk = this.walk, w = this.w;
+    if (dx !== 0) {
+      for (;;) {
+        i += dx;
+        if (!walk[i]) return -1;
+        if (i === goal) return i;
+        if ((walk[i - w] && !walk[i - dx - w]) || (walk[i + w] && !walk[i - dx + w])) return i;
+      }
+    }
+    const step = dz * w;
+    for (;;) {
+      i += step;
+      if (!walk[i]) return -1;
+      if (i === goal) return i;
+      if ((walk[i - 1] && !walk[i - 1 - step]) || (walk[i + 1] && !walk[i + 1 - step])) return i;
+    }
+  }
+
+  _jumpDiagonal(i, dx, dz, goal) {
+    const walk = this.walk, w = this.w;
+    const sz = dz * w;
+    for (;;) {
+      if (!walk[i + dx] || !walk[i + sz]) return -1; // no corner cutting
+      i += dx + sz;
+      if (!walk[i]) return -1;
+      if (i === goal) return i;
+      if (this._jumpStraight(i, dx, 0, goal) >= 0 || this._jumpStraight(i, 0, dz, goal) >= 0) return i;
+    }
+  }
+
+  _jps(s, t, maxExpansions, heuristicWeight) {
+    const { w, walk, g, parent, seen, closed, heap } = this;
+    const id = this._nextSearch();
+    heap.clear();
+    g[s] = 0;
+    parent[s] = -1;
+    seen[s] = id;
+    heap.push(s, this._octile(s, t) * heuristicWeight);
+    const dirs = new Int8Array(16);
+    let expansions = 0;
+    let found = false;
+    while (heap.size) {
+      const c = heap.pop();
+      if (closed[c] === id) continue;
+      closed[c] = id;
+      if (c === t) {
+        found = true;
+        break;
+      }
+      if (++expansions > maxExpansions) break;
+      // Successor directions: all eight from the start, pruned by the arrival direction after.
+      let nd = 0;
+      const p = parent[c];
+      if (p < 0) {
+        for (const [dx, dz] of DIRS) {
+          dirs[nd++] = dx;
+          dirs[nd++] = dz;
+        }
+      } else {
+        const cx = c % w, px = p % w;
+        const dx = Math.sign(cx - px), dz = Math.sign((c - cx) / w - (p - px) / w);
+        if (dx && dz) {
+          const ox = walk[c + dx], oz = walk[c + dz * w];
+          if (oz) { dirs[nd++] = 0; dirs[nd++] = dz; }
+          if (ox) { dirs[nd++] = dx; dirs[nd++] = 0; }
+          if (ox && oz) { dirs[nd++] = dx; dirs[nd++] = dz; }
+        } else if (dx) {
+          const next = walk[c + dx], up = walk[c - w], down = walk[c + w];
+          if (next) {
+            dirs[nd++] = dx; dirs[nd++] = 0;
+            if (up) { dirs[nd++] = dx; dirs[nd++] = -1; }
+            if (down) { dirs[nd++] = dx; dirs[nd++] = 1; }
+          }
+          if (up) { dirs[nd++] = 0; dirs[nd++] = -1; }
+          if (down) { dirs[nd++] = 0; dirs[nd++] = 1; }
+        } else {
+          const next = walk[c + dz * w], left = walk[c - 1], right = walk[c + 1];
+          if (next) {
+            dirs[nd++] = 0; dirs[nd++] = dz;
+            if (right) { dirs[nd++] = 1; dirs[nd++] = dz; }
+            if (left) { dirs[nd++] = -1; dirs[nd++] = dz; }
+          }
+          if (right) { dirs[nd++] = 1; dirs[nd++] = 0; }
+          if (left) { dirs[nd++] = -1; dirs[nd++] = 0; }
+        }
+      }
+      for (let k = 0; k < nd; k += 2) {
+        const dx = dirs[k], dz = dirs[k + 1];
+        const j = dx && dz ? this._jumpDiagonal(c, dx, dz, t) : this._jumpStraight(c, dx, dz, t);
+        if (j < 0 || closed[j] === id) continue;
+        const ng = g[c] + this._octile(c, j);
+        if (seen[j] !== id || ng < g[j]) {
+          seen[j] = id;
+          g[j] = ng;
+          parent[j] = c;
+          heap.push(j, ng + this._octile(j, t) * heuristicWeight);
+        }
+      }
+    }
+    this.stats.expansions += expansions;
+    if (!found) return null;
+    // Expand the jump points back into the full cell sequence (each leg is straight or diagonal).
+    const jumps = [];
+    for (let c = t; c !== -1; c = parent[c]) jumps.push(c);
+    jumps.reverse();
+    const cells = [jumps[0]];
+    for (let k = 1; k < jumps.length; k++) {
+      const a = jumps[k - 1], b = jumps[k];
+      const ax = a % w, bx = b % w;
+      const ddz = (b - bx) / w - (a - ax) / w;
+      const step = Math.sign(bx - ax) + Math.sign(ddz) * w;
+      const n = Math.max(Math.abs(bx - ax), Math.abs(ddz));
+      for (let m = 1, c = a + step; m < n; m++, c += step) cells.push(c);
+      cells.push(b);
+    }
+    return cells;
+  }
+
+  // String-pull a cell path: keep only the corners needed for straight walkable segments.
+  _smooth(cells, start0, goal0) {
     const pts = cells.map((c) => this.centerOf(c));
     pts[0] = { x: start0.x, z: start0.z };
     pts[pts.length - 1] = { x: goal0.x, z: goal0.z };
