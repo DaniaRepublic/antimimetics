@@ -203,8 +203,9 @@ export function buildCity(B) {
   car(B, { x: 6.4, z: -66, yaw: -0.12, type: 'hatch' });
   car(B, { x: -3.8, z: -80.5, yaw: 0.4, type: 'sedan', burnt: true, fire: true, fireScale: 1.15 });
   car(B, { x: 6.8, z: -76.5, yaw: 1.4, type: 'sedan', door: true, doorSide: 1 });
-  car(B, { x: 9.8, z: -88.5, yaw: 0.02, type: 'van', color: color(0x5a6470) });
-  bus(B, { x: 3.2, z: -101, yaw: 0.28, fold: 0.75 });
+  car(B, { x: 9.5, z: -82.4, yaw: 0.02, type: 'van', color: color(0x5a6470) });
+  // The bus folds back toward the east kerb but leaves a dark gap by the wall: the quiet way north.
+  bus(B, { x: 3.2, z: -101, yaw: 0.28, fold: 0.3 });
   car(B, { x: -5.4, z: -94, yaw: 2.9, type: 'hatch' });
   car(B, { x: -5.6, z: -107.5, yaw: 2.6, type: 'sedan', door: true });
   car(B, { x: 6.0, z: -114.5, yaw: -0.35, type: 'hatch', burnt: true });
@@ -372,23 +373,28 @@ export function buildCity(B) {
   for (const [x, z, w, d, yaw] of [[-10, -240, 3, 2, 0.3], [9, -262, 3.5, 2, 1.0], [-11, -300, 3, 1.8, 0.5], [10, -318, 2.5, 1.6, 0.2], [-3, -284, 2.5, 1.5, 0.8]]) B.puddle(x, z, w, d, yaw);
   for (const [x, z] of [[-9, -228], [11, -246], [-14, -270], [8, -296], [-6, -322], [14, -334]]) B.decal('papers', x, z, 2.4, 2.4, rng() * 6);
   for (const [x, z] of [[0, -250], [-2, -288], [3, -320]]) B.decal('leaves', x, z, 5, 5, rng() * 6);
-  // Cover pockets, ~17 m apart: each shields from both sides of the boulevard.
-  planter(B, { x: -3.6, z: -235, w: 3.2, d: 1.4, h: 1.2 });
-  planter(B, { x: 3.2, z: -236.5, w: 3.2, d: 1.4, h: 1.2, yaw: 0.1 });
-  bench(B, { x: 0, z: -233, yaw: S });
+  // Cover pockets, ~14 m apart along the median: two north-south walls each (a crouched player
+  // between them is hidden from both sidewalks, diagonals included), leaving 10-12 m of open
+  // ground between pockets: one call's worth of walking. (tools/playtest-map.mjs --exposure)
+  planter(B, { x: -3.6, z: -238, w: 3.2, d: 1.4, h: 1.2 });
+  planter(B, { x: 3.2, z: -239.5, w: 3.2, d: 1.4, h: 1.2, yaw: 0.1 });
+  bench(B, { x: 6.4, z: -236.5, yaw: W });
   bus(B, { x: -4.1, z: -252.5, yaw: 0.06, burnt: true, articulated: false });
-  car(B, { x: 1.2, z: -253.5, yaw: -0.08, type: 'sedan', burnt: true });
-  statue(B, { x: -2.3, z: -270.5, w: 3.6, plinth: 2.8, yaw: 0.0 });
-  planter(B, { x: 3.4, z: -270, w: 1.4, d: 3.4, h: 1.2 });
-  kiosk(B, { x: 2.9, z: -287.2, yaw: W });
-  crate(B, { x: 2.7, z: -290.3, yaw: 0.2, s: 0.85, stack: 2 });
-  car(B, { x: -1.5, z: -288.6, yaw: 0.03, type: 'sedan', burnt: true });
-  dumpster(B, { x: -4.4, z: -284.5, yaw: 0.9, color: color(0x2a3446) });
-  overturnedTruck(B, { x: -1.4, z: -305, yaw: 0.04 });
+  car(B, { x: 1.3, z: -253.8, yaw: -0.08, type: 'pickup', burnt: true });
+  statue(B, { x: -2.3, z: -268.5, w: 3.6, plinth: 2.8, yaw: 0.0 });
+  planter(B, { x: 3.4, z: -268, w: 1.4, d: 3.4, h: 1.2 });
+  kiosk(B, { x: 2.9, z: -284.2, yaw: W });
+  crate(B, { x: 2.7, z: -287.3, yaw: 0.2, s: 0.85, stack: 2 });
+  car(B, { x: -1.5, z: -285.6, yaw: 0.03, type: 'sedan', burnt: true });
+  dumpster(B, { x: -4.4, z: -281.5, yaw: 0.9, color: color(0x2a3446) });
+  overturnedTruck(B, { x: -1.4, z: -302, yaw: 0.04 });
   // its cargo spilled along the east side forms the other wall of the pocket
-  for (const [x, z, n] of [[2.9, -301.8, 2], [3.0, -304.2, 2], [2.8, -306.6, 2], [3.1, -308.8, 1]]) crate(B, { x, z, yaw: (rng() - 0.5) * 0.4, s: 0.85, stack: n });
-  car(B, { x: -4.6, z: -322.5, yaw: 0.25, type: 'hatch' });
-  car(B, { x: 1.9, z: -323.5, yaw: -0.2, type: 'pickup' });
+  for (const [x, z, n] of [[2.9, -298.8, 2], [3.0, -301.2, 2], [2.8, -303.6, 2], [3.1, -305.8, 1]]) crate(B, { x, z, yaw: (rng() - 0.5) * 0.4, s: 0.85, stack: n });
+  car(B, { x: -4.6, z: -319.5, yaw: 0.25, type: 'hatch' });
+  car(B, { x: 1.9, z: -320.5, yaw: -0.2, type: 'pickup' });
+  // the last pocket before the highway: a van and a hatch left nose to tail at the median's end
+  car(B, { x: -2.6, z: -333, yaw: 0.08, type: 'van', burnt: true });
+  car(B, { x: 2.2, z: -334, yaw: -0.1, type: 'hatch', door: true });
   // Sparse edge clutter (not enough to hide in)
   for (const [x, z] of [[-15.8, -229], [15.8, -241], [-15.8, -291], [15.8, -312]]) newsBox(B, { x, z, yaw: x > 0 ? W : E });
   car(B, { x: -10.5, z: -258, yaw: 0.06, type: 'sedan' });
@@ -405,7 +411,7 @@ export function buildCity(B) {
   // Graffiti: the rule of the boulevard
   B.graffiti(GRAFFITI.calls, 3.48, 1.2, -212.2, W, 4.6, 2.3, 'WHEN IT CALLS THEY LISTEN — when the giant calls, they freeze and look up. Blind and deaf until it ends.', { range: 9, duration: 7 });
   // (centred on the planter's south face: x -5.2..-2.0)
-  B.graffiti(GRAFFITI.move, -3.6, 0.12, -234.28, S, 2.4, 1.0, 'MOVE WHEN IT CALLS. Freeze behind cover between calls.', { range: 8 });
+  B.graffiti(GRAFFITI.move, -3.6, 0.12, -237.28, S, 2.4, 1.0, 'MOVE WHEN IT CALLS. Freeze behind cover between calls.', { range: 8 });
   B.graffiti(GRAFFITI.tally, -17.48, 1.4, -322, E, 2.4, 1.2);
 
   // ==========================================================================================

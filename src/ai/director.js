@@ -224,10 +224,13 @@ export class Director {
     }
   }
 
+  // A shriek carries ~26 m: whoever hears it hurries to where the shrieker saw the player.
   shout(src) {
+    const seen = src.brain.lastSeenPos;
+    const pos = { x: seen.x, z: seen.z };
     for (const s of this.snatchers) {
       if (s === src || !s.active) continue;
-      if (s.brain.hearing(src.position, E.alertShoutRadius) >= 0) s.brain.hearShout(src.position);
+      if (s.brain.hearing(src.position, E.alertShoutRadius) >= 0) s.brain.hearShout(pos);
     }
   }
 

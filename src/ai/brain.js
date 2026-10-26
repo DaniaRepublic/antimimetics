@@ -37,6 +37,9 @@ export const TUNE = {
   alarm: { speed: 2.4, ringMin: 2.8, ringSpread: 1.4, linger: 3, minStare: 7, occlusion: 0.8 },
   raptureStagger: 0.35,
   rapturePitch: 0.7, // ~40 degrees up
+  raptureRecover: 0.5, // s after the call ends: heads still coming down, blind and deaf
+  // Devouts do nothing but watch the open ground: sharper eyes than a sentry.
+  devoutPerception: 1.5,
 };
 
 // Piecewise-linear lookup in a sorted [[x, y], ...] table.
@@ -247,6 +250,7 @@ export class Brain {
       const light = lerp(TUNE.light[0], TUNE.light[1], clamp(Number.isFinite(p.lightLevel) ? p.lightLevel : 0.2, 0, 1));
       rate = curve(TUNE.distanceCurve, this.senseDist) * focus * this.stanceFactor() * light * this.stateFactor() * vis;
     }
+    if (this.kind === 'devout') rate *= TUNE.devoutPerception;
     if (this.senseNear && !p.crouched && (p.mode === 'walk' || p.mode === 'sprint')) rate += TUNE.proximityRate;
     if (this.asleep) rate *= TUNE.sleep.perception;
     if (this.game.time < this.wakeUntil) rate *= 0.5;
@@ -490,6 +494,7 @@ export class Brain {
     if (this.state !== 'rapture') return;
     const r = this.resume || { state: 'calm' };
     this.resume = null;
+    this.ignoreUntil = Math.max(this.ignoreUntil, this.game.time + TUNE.raptureRecover);
     switch (r.state) {
       case 'chase':
         // It lost you while it listened: search where it last knew you were.
