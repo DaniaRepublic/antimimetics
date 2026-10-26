@@ -59,6 +59,9 @@ export function footfall(b, { intensity = 1 } = {}) {
   perc(subEnv.gain, t, 1, 0.012, 0.8, end);
   const subLvl = b.gain(0.5);
   b.chain(sub, subEnv, b.shaper(driveCurve(ctx, 2.4)), subLvl, out);
+  // Its upper harmonics (the sweep overdriven nearly square, then 150-600 Hz of it): small
+  // speakers play nothing of the sub itself, but the ear rebuilds a deep boom from these.
+  b.chain(subEnv, b.shaper(driveCurve(ctx, 5)), b.filter('highpass', 150, 0.7), b.filter('lowpass', 500, 0.7), b.gain(0.4), out);
 
   const body = b.noise('brown', t, end);
   const lp = b.filter('lowpass', 300, 1.2);
@@ -73,18 +76,18 @@ export function footfall(b, { intensity = 1 } = {}) {
   const tbp = b.filter('bandpass', 200, 1.1);
   contour(tbp.frequency, [[t, 230], [t + 0.5, 120], [t + 1.4, 90]]);
   const thudEnv = b.gain(0);
-  perc(thudEnv.gain, t, 0.9 * (0.45 + 0.55 * I), 0.005, 0.16, t + 1.4);
+  perc(thudEnv.gain, t, 2.2 * (0.45 + 0.55 * I), 0.005, 0.16, t + 1.4);
   b.chain(thud, tbp, thudEnv, b.shaper(driveCurve(ctx, 1.8)), out);
 
   if (I > 0.2) {
     const crack = b.noise('white', t, t + 0.4);
     const env = b.gain(0);
-    perc(env.gain, t, 0.45 * ((I - 0.2) / 0.8), 0.002, 0.04, t + 0.4);
+    perc(env.gain, t, 0.7 * ((I - 0.2) / 0.8), 0.002, 0.04, t + 0.4);
     b.chain(crack, b.filter('bandpass', 650, 0.8), env, out);
   }
   if (I > 0.35) {
     const r = b.sample(pick(banks.rattle(ctx)), t + rand(0.05, 0.12), rand(0.85, 1.15));
-    b.chain(r, b.filter('highpass', 120), b.gain(0.4 * ((I - 0.35) / 0.65)), out);
+    b.chain(r, b.filter('highpass', 120), b.gain(0.6 * ((I - 0.35) / 0.65)), out);
   }
   return 3.6;
 }
@@ -431,7 +434,7 @@ export function creatureStep(b, { chasing = false } = {}) {
 // =============================================================================================
 
 const STEP_MODES = {
-  crouch: { gain: 0.16, lp: 1500, rate: 1.1 },
+  crouch: { gain: 0.12, lp: 1500, rate: 1.1 },
   walk: { gain: 0.5, lp: 5200, rate: 1 },
   sprint: { gain: 0.95, lp: 12000, rate: 0.9 },
 };
@@ -630,7 +633,8 @@ export function swell(b) {
   env.gain.setTargetAtTime(0, t + 2.6, 0.7);
   env.gain.setValueAtTime(0, t + D);
   env.connect(b.out);
-  for (const [f, a, det] of [[73.42, 0.3, 0], [110, 0.2, 5], [116.54, 0.12, -4], [36.71, 0.25, 0]]) {
+  // (the upper partials are what small speakers will play of it)
+  for (const [f, a, det] of [[73.42, 0.3, 0], [110, 0.2, 5], [116.54, 0.12, -4], [36.71, 0.25, 0], [220, 0.07, 3], [329.6, 0.035, -3]]) {
     b.chain(b.osc('sine', f, t, t + D, det), b.gain(a), env);
   }
   const n = b.noise('pink', t, t + D);
@@ -685,11 +689,12 @@ export function grab(b) {
   perc(ng.gain, t, 0.9, 0.002, 0.12, cut);
   b.chain(n, ng, out);
   shriek(b.fork(out, t + 0.03), { pitch: 1.25, length: 1.3 });
+  // (a sub drop, not a 1.3 s square wave: driven harder it would be most of the energy)
   const sub = b.osc('sine', 90, t, cut);
   contour(sub.frequency, [[t, 95], [cut, 24]]);
   const sg = b.gain(0);
-  lines(sg.gain, [[t, 0], [t + 0.02, 0.8], [cut, 0.6]]);
-  b.chain(sub, sg, b.shaper(driveCurve(ctx, 3)), out);
+  lines(sg.gain, [[t, 0], [t + 0.02, 0.55], [t + 0.5, 0.4], [cut, 0.25]]);
+  b.chain(sub, sg, b.shaper(driveCurve(ctx, 2)), out);
   b.chain(b.sample(pick(banks.rattle(ctx)), t + 0.04, 0.55), b.gain(0.5), out);
 
   // ...then only a thin ringing in the ears, fading away

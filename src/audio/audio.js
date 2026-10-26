@@ -34,14 +34,19 @@ const WHISPER_RANGE = 20; // m: start whispering
 const WHISPER_KEEP = 24; // m: stop whispering (hysteresis)
 const TAU = Math.PI * 2;
 
-// Mix levels (linear gain at each voice's input).
+// Mix levels (linear gain at each voice's input), calibrated at the default volume, where the
+// master path is unity gain below the glue compressor. Measured with tools/ux-audio-session.mjs
+// (K-weighted momentary maxima at the output): ambience bed ~-33, player crouch step ~-48, walk
+// ~-33, sprint ~-24, snatcher whisper at 10 m clearly over the bed in the 0.5-4 kHz band, near
+// footfall ~-15 (and audible above 200 Hz), the call ~-12 and everything else ducked under it,
+// the grab ~-19 dBFS RMS.
 const LEVEL = {
-  wind: 0.22, drone: 0.07, tinnitusMin: 0.0015, tinnitusMax: 0.02, heart: 0.2, chase: 0.3,
-  footfall: 0.95, call: 0.75, legGroan: 0.55,
+  wind: 0.3, drone: 0.09, tinnitusMin: 0.0015, tinnitusMax: 0.02, heart: 0.2, chase: 0.3,
+  footfall: 0.6, call: 1.3, legGroan: 0.55,
   metalGroan: 0.5, structureCreak: 0.4, distantWail: 0.3,
-  whisper: 1.45, questionCreak: 2.4, shriek: 0.75, stinger: 0.32, hiss: 0.9, exhale: 0.9,
-  creatureStep: 0.75, footstep: 0.55, breath: 0.42, gasp: 0.4, whoosh: 0.28, emptyClick: 0.3, clink: 0.25,
-  shatter: 2.0, alarm: 0.9, chainGrind: 0.9, gateOpen: 0.85, chime: 0.08, swell: 0.3, grab: 0.3, ending: 0.32,
+  whisper: 3.2, questionCreak: 3.8, shriek: 0.75, stinger: 0.32, hiss: 0.5, exhale: 0.9,
+  creatureStep: 0.4, footstep: 0.55, breath: 0.42, gasp: 0.4, whoosh: 0.28, emptyClick: 0.3, clink: 0.25,
+  shatter: 2.0, alarm: 0.9, chainGrind: 0.9, gateOpen: 0.65, chime: 0.08, swell: 0.3, grab: 0.23, ending: 0.32,
 };
 
 // How much each bus is kept while the leviathan calls.
@@ -305,18 +310,24 @@ export class AudioEngine {
     };
 
     this.master = keep(g(volumeCurve(this.volume)));
+    // Glue compression for the loud moments only (the call, a near footfall, the grab): the mix
+    // itself is set by the LEVEL table. Chrome's DynamicsCompressorNode adds its own make-up gain
+    // (measured: +2.9 dB at these settings, +1.4 dB for the limiter), which would lift the quiet
+    // bed and squash the dynamics; each is cancelled by a fixed gain after it.
     const comp = keep(ctx.createDynamicsCompressor());
-    comp.threshold.value = -20;
-    comp.knee.value = 14;
-    comp.ratio.value = 3.5;
-    comp.attack.value = 0.006;
-    comp.release.value = 0.28;
+    comp.threshold.value = -12;
+    comp.knee.value = 10;
+    comp.ratio.value = 3;
+    comp.attack.value = 0.008;
+    comp.release.value = 0.3;
+    const compTrim = keep(g(10 ** (-2.88 / 20)));
     const limiter = keep(ctx.createDynamicsCompressor());
     limiter.threshold.value = -2.5;
     limiter.knee.value = 0;
     limiter.ratio.value = 20;
     limiter.attack.value = 0.001;
     limiter.release.value = 0.12;
+    const limTrim = keep(g(10 ** (-1.42 / 20)));
     this.pauseFilter = keep(ctx.createBiquadFilter());
     this.pauseFilter.type = 'lowpass';
     this.pauseFilter.frequency.value = 20000;
@@ -325,12 +336,18 @@ export class AudioEngine {
     this.preMaster = keep(g(1));
     this.preMaster.connect(this.pauseFilter);
     this.pauseFilter.connect(this.pauseGain);
-    this.pauseGain.connect(this.master);
+    // LEVEL values are calibrated at the default volume (0.8): this trim makes that unity gain.
+    this.trim = keep(g(1 / volumeCurve(0.8)));
+    this.pauseGain.connect(this.trim);
+    this.trim.connect(this.master);
     this.master.connect(comp);
-    comp.connect(limiter);
-    limiter.connect(ctx.destination);
+    comp.connect(compTrim);
+    compTrim.connect(limiter);
+    limiter.connect(limTrim);
+    limTrim.connect(ctx.destination);
     this.compressor = comp;
     this.limiter = limiter;
+    this.output = limTrim; // the final mix (for meters and tests)
 
     // Reverbs (impulse responses generated once).
     // Reverbs: impulse responses are generated and assigned by warmUp() right after init.
@@ -395,10 +412,10 @@ export class AudioEngine {
     this.heart.level.gain.value = LEVEL.heart;
 
     for (let i = 0; i < WHISPER_SLOTS; i++) {
-      // Gentler rolloff than physical so a whisper still carries over the wind at 10-15 m: it is
-      // the player's main cue that a snatcher is close (about +1 dB at 3 m, +3 dB at 10-20 m
-      // compared with ref 1.5 / rolloff 1).
-      const chain = this.makeChain({ bus: 'enemy', gain: 0, pos: { x: 0, y: -100, z: 0 }, ref: 2, rolloff: 0.6, send: 0.18, hrtf: true });
+      // Much gentler rolloff than physical so a whisper carries over the wind at 10-15 m: it is
+      // the player's main cue that a snatcher is near, around a corner or behind a wreck (-5 dB
+      // from 2 to 6 m, -9 dB at 12 m, -12 dB at 20 m).
+      const chain = this.makeChain({ bus: 'enemy', gain: 0, pos: { x: 0, y: -100, z: 0 }, ref: 2, rolloff: 0.35, send: 0.18, hrtf: true });
       const voice = new WhisperVoice(ctx, chain.input);
       voice.level.gain.value = LEVEL.whisper;
       this.slots.push({ voice, chain, enemy: null, freeAt: 0 });
@@ -638,7 +655,7 @@ export class AudioEngine {
     const L = this.listenerPos;
     const dist = finitePos(e.pos) ? Math.hypot(e.pos.x - L.x, e.pos.z - L.z) : 0;
     this.play('footfall', { intensity: I }, {
-      bus: 'levi', gain: LEVEL.footfall * (0.06 + 0.94 * I ** 1.4), pan: this.panOf(e.pos) * 0.6,
+      bus: 'levi', gain: LEVEL.footfall * (0.06 + 0.94 * I ** 1.1), pan: this.panOf(e.pos) * 0.6,
       send: 0.12, vast: 0.35 + 0.3 * (1 - I), priority: 8, kind: 'footfall', maxKind: 3,
       delay: clamp((dist - 40) / 343, 0, 1),
     });
@@ -684,8 +701,8 @@ export class AudioEngine {
     const p = e.pos ?? e.enemy?.position;
     if (!p) return;
     this.play('creatureStep', { chasing }, {
-      bus: 'enemy', pos: { x: p.x, y: 0.2, z: p.z }, ref: 1.5, gain: LEVEL.creatureStep * (chasing ? 1.5 : 1),
-      send: 0.14, priority: chasing ? 4 : 2, kind: 'cstep', maxKind: 6, cull: chasing ? 45 : 30,
+      bus: 'enemy', pos: { x: p.x, y: 0.2, z: p.z }, ref: 1.5, gain: LEVEL.creatureStep * (chasing ? 1.6 : 1),
+      send: 0.14, priority: chasing ? 4 : 2, kind: 'cstep', maxKind: 6, cull: chasing ? 45 : 24,
     });
   }
 
@@ -1006,7 +1023,7 @@ export class AudioEngine {
     if (!this.analyser) {
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 2048;
-      this.limiter.connect(this.analyser);
+      this.output.connect(this.analyser);
       this.meterBuf = new Float32Array(this.analyser.fftSize);
     }
     this.analyser.getFloatTimeDomainData(this.meterBuf);

@@ -101,5 +101,6 @@ export const TUTORIAL = {
   crouch: '[C] crouch — slower, quieter, harder to see',
   throw: '[F] or click to throw a bottle — they walk toward the sound',
   light: 'the eye shows how visible you are — light gives you away',
+  noticed: 'that mark is one of them noticing you — get out of its sight before it fills',
   chase: 'they will not run. [Shift] sprint, break their line of sight, then hide',
 };

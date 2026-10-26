@@ -493,7 +493,8 @@ const SEQUENCE = [
 const ALWAYS = () => true;
 const CONTEXTUAL = {
   light: { min: 4.5, max: 6, done: ALWAYS, expires: 5 },
-  chase: { min: 4, max: 6, done: ALWAYS, expires: 5, urgent: true },
+  noticed: { min: 4.5, max: 6.5, done: ALWAYS, expires: 4, urgent: 1 },
+  chase: { min: 4, max: 6, done: ALWAYS, expires: 5, urgent: 2 },
 };
 const ZONE_HINT = { min: 5, max: 7, done: ALWAYS, expires: 30 };
 
@@ -518,8 +519,8 @@ export class Tutorial {
     this.queue.push({ id, text, spec, at: this.playTime, delay });
   }
 
-  // Built-in contextual tip ('light', 'chase'). An urgent one goes first and cuts short
-  // whatever lesson is on screen (it will not be missed: the player is being hunted).
+  // Built-in contextual tip ('light', 'noticed', 'chase'). An urgent one goes first and cuts
+  // short whatever less urgent text is on screen: it is about what is happening right now.
   trigger(id) {
     const spec = CONTEXTUAL[id];
     if (!spec?.urgent || this.seen.has(id) || this.current?.id === id) {
@@ -528,7 +529,8 @@ export class Tutorial {
     }
     this.queue = this.queue.filter((q) => q.id !== id);
     this.queue.unshift({ id, text: TUTORIAL[id], spec, at: this.playTime, delay: 0 });
-    if (this.current && this.current.out < 0) {
+    this.queue.sort((a, b) => (b.spec.urgent ?? 0) - (a.spec.urgent ?? 0));
+    if (this.current && this.current.out < 0 && (this.current.spec.urgent ?? 0) < spec.urgent) {
       // Not counted as seen: an interrupted lesson comes back later.
       if (!this.current.spec.urgent && this.current.t < this.current.spec.min) this.seen.delete(this.current.id);
       this.current.out = 0;

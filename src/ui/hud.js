@@ -247,6 +247,8 @@ export class Hud {
     const list = g.director?.getIndicators?.();
     const indicators = Array.isArray(list) ? list : NO_INDICATORS;
     this.ring.update(dt, indicators, player);
+    // The first time a mark builds up (and nothing is chasing yet), say what it means.
+    if (indicators.some((i) => (i?.detection ?? 0) > 0.22 && i?.state !== 'chase')) this.tutorial.trigger('noticed');
 
     const chasing = (g.director?.chasing || 0) > 0 || indicators.some((i) => i?.state === 'chase');
     this.edgeLevel = damp(this.edgeLevel, chasing ? 1 : 0, chasing ? 2.5 : 0.9, dt);

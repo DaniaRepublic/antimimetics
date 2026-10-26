@@ -101,9 +101,10 @@ async function pageSetup(o) {
   };
   for (const [name, bus] of Object.entries(a.buses)) addTap(name, [bus.dry]);
   addTap('reverb', [a.revOut, a.vastOut]);
-  addTap('master', [a.limiter]);
+  const finalNode = a.output ?? a.limiter;
+  addTap('master', [finalNode]);
   const split = ctx.createChannelSplitter(2);
-  a.limiter.connect(split);
+  finalNode.connect(split);
   const capL = ctx.createAnalyser();
   const capR = ctx.createAnalyser();
   capL.fftSize = capR.fftSize = 2048;
