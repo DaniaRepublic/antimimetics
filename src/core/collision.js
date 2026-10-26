@@ -22,6 +22,13 @@ export class CollisionWorld {
     this.stamp = 1;
     this._tmp = [];
     this._nextId = 0;
+    // Extent of the hash cells ever used (only grows). query() clamps to it, so an infinite or
+    // absurd rectangle (a NaN/Infinity position upstream) costs at most the populated area instead
+    // of looping forever.
+    this._ix0 = Infinity;
+    this._ix1 = -Infinity;
+    this._iz0 = Infinity;
+    this._iz1 = -Infinity;
   }
 
   addBox({
@@ -97,8 +104,14 @@ export class CollisionWorld {
   _insert(col) {
     if (!CollisionWorld._hashable(col)) return;
     const cs = this.cellSize;
-    for (let ix = Math.floor(col.minX / cs); ix <= Math.floor(col.maxX / cs); ix++) {
-      for (let iz = Math.floor(col.minZ / cs); iz <= Math.floor(col.maxZ / cs); iz++) {
+    const ix0 = Math.floor(col.minX / cs), ix1 = Math.floor(col.maxX / cs);
+    const iz0 = Math.floor(col.minZ / cs), iz1 = Math.floor(col.maxZ / cs);
+    if (ix0 < this._ix0) this._ix0 = ix0;
+    if (ix1 > this._ix1) this._ix1 = ix1;
+    if (iz0 < this._iz0) this._iz0 = iz0;
+    if (iz1 > this._iz1) this._iz1 = iz1;
+    for (let ix = ix0; ix <= ix1; ix++) {
+      for (let iz = iz0; iz <= iz1; iz++) {
         const key = ix * 73856093 ^ iz * 19349663;
         let cell = this.grid.get(key);
         if (!cell) this.grid.set(key, (cell = []));
@@ -130,8 +143,9 @@ export class CollisionWorld {
     out.length = 0;
     const stamp = ++this.stamp;
     const cs = this.cellSize;
-    const x0 = Math.floor(minX / cs), x1 = Math.floor(maxX / cs);
-    const z0 = Math.floor(minZ / cs), z1 = Math.floor(maxZ / cs);
+    // Clamped to the populated cells (NaN bounds give an empty range).
+    const x0 = Math.max(Math.floor(minX / cs), this._ix0), x1 = Math.min(Math.floor(maxX / cs), this._ix1);
+    const z0 = Math.max(Math.floor(minZ / cs), this._iz0), z1 = Math.min(Math.floor(maxZ / cs), this._iz1);
     for (let ix = x0; ix <= x1; ix++) {
       for (let iz = z0; iz <= z1; iz++) {
         const cell = this.grid.get(ix * 73856093 ^ iz * 19349663);

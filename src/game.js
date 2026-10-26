@@ -269,16 +269,20 @@ export class Game {
     if (!RESPAWNABLE.has(this.state)) return false;
     const cp = this.checkpoint;
     this.caughtBy = null;
-    this.projectiles.clear();
-    this.level.resetDynamic(cp);
-    this.player.spawn(cp.pos, cp.yaw);
-    this.player.bottles = this.checkpointBottles;
-    this.player.focus = null;
-    this._lastGood.pos.copy(this.player.position);
-    this.director.reset();
-    this.leviathan.onRespawn?.(cp);
+    // Each reset is guarded (outside ?debug): one module failing to reset must not leave the
+    // player stuck on the dead screen, every retry throwing before the state changes.
+    this.guard('respawn:projectiles', () => this.projectiles.clear());
+    this.guard('respawn:level', () => this.level.resetDynamic(cp));
+    this.guard('respawn:player', () => {
+      this.player.spawn(cp.pos, cp.yaw);
+      this.player.bottles = this.checkpointBottles;
+      this.player.focus = null;
+    });
+    if (finite3(this.player.position)) this._lastGood.pos.copy(this.player.position);
+    this.guard('respawn:director', () => this.director.reset());
+    this.guard('respawn:leviathan', () => this.leviathan.onRespawn?.(cp));
     this.noiseMask = 0;
-    this.atmosphere.setDeath(0);
+    this.guard('respawn:atmosphere', () => this.atmosphere.setDeath(0));
     this.input.reset();
     this.bus.emit('game:respawn', { checkpoint: cp });
     this.input.requestLock();
@@ -349,6 +353,9 @@ export class Game {
   // One simulation step. Systems only advance in states where the world is "live".
   tick(dt) {
     if (!(dt >= 0)) dt = 0;
+    // No playing blind: Enter on the title / dead screen (or a respawn) can still reach 'playing'
+    // while the picture is gone behind the notice. Hold it paused until the context comes back.
+    if (this.contextLost && this.state === 'playing') this.pause();
     this.stateTime += dt;
     const live = this.state === 'playing' || this.state === 'caught' || this.state === 'won';
     if (live) {
@@ -434,6 +441,9 @@ export class Game {
       good.pitch = p.pitch;
     } else {
       this.reportError('watchdog', new Error('player state went non-finite; restored the last good position'));
+      if (!finite3(good.pos)) good.pos.set(this.checkpoint.pos.x, 0, this.checkpoint.pos.z);
+      if (!Number.isFinite(good.yaw)) good.yaw = this.checkpoint.yaw ?? 0;
+      if (!Number.isFinite(good.pitch)) good.pitch = 0;
       p.position.copy(good.pos);
       p.velocity.set(0, 0, 0);
       p.yaw = good.yaw;
@@ -588,7 +598,9 @@ export class Game {
 
   // Debug helper: move the player.
   teleport(x, z, yaw = this.player.yaw) {
-    this.player.spawn({ x, z }, yaw);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return false; // would poison the watchdog's last good spot
+    this.player.spawn({ x, z }, Number.isFinite(yaw) ? yaw : this.player.yaw);
     this._lastGood.pos.copy(this.player.position);
+    return true;
   }
 }

@@ -10,7 +10,8 @@
 // Options: iframe: 'allow-scripts' loads the game inside <iframe sandbox="allow-scripts"> (no
 // pointer lock, no storage) and h.page / h.eval then target that frame; settle: ms of real frames
 // to let render after boot (default 500); args: extra Chromium flags; pointerLock: true lets the
-// game really lock the pointer (off by default: see below).
+// game really lock the pointer (off by default: see below); frameStyle: inline CSS for the iframe
+// (e.g. 'width:0;height:0' boots the game hidden; resize it later through h.top).
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -20,7 +21,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 
 export async function launch({
   html = 'dist/index.html', query = 'autostart', width = 1280, height = 720, timeout = 60000, iframe = null, settle = 500,
-  args = [], pointerLock = false,
+  args = [], pointerLock = false, frameStyle = '',
 } = {}) {
   const browser = await chromium.launch({
     args: [
@@ -54,14 +55,17 @@ export async function launch({
   top.on('pageerror', (err) => errors.push(`[pageerror] ${err.message}\n${err.stack || ''}`));
   const url = 'file://' + path.resolve(html) + (query ? `?${query}` : '');
   let target = top;
+  let wrapper = null;
   if (iframe) {
-    // A wrapper page next to the game so the frame loads it as a sibling file.
-    const wrapper = path.join(path.dirname(path.resolve(html)), '.harness-frame.html');
+    // A wrapper page next to the game so the frame loads it as a sibling file. Unique per launch:
+    // tools running at the same time must not rewrite each other's wrapper.
+    wrapper = path.join(path.dirname(path.resolve(html)), `.harness-frame-${process.pid}-${Date.now().toString(36)}.html`);
     const sandbox = iframe === true ? 'allow-scripts' : String(iframe);
+    const style = String(frameStyle).replace(/"/g, '&quot;');
     fs.writeFileSync(wrapper, `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}</style>
-<iframe id="game" sandbox="${sandbox}" src="${path.basename(html)}${query ? `?${query}` : ''}"></iframe>`);
+<iframe id="game" sandbox="${sandbox}" style="${style}" src="${path.basename(html)}${query ? `?${query}` : ''}"></iframe>`);
     await top.goto('file://' + wrapper);
-    const handle = await top.waitForSelector('#game');
+    const handle = await top.waitForSelector('#game', { state: 'attached' }); // may start hidden
     target = await handle.contentFrame();
   } else {
     await top.goto(url);
@@ -93,6 +97,9 @@ export async function launch({
   return {
     browser, page: target, top, errors, logs, shot, cam, bootError,
     eval: (fn, arg) => target.evaluate(fn, arg),
-    close: () => browser.close(),
+    close: async () => {
+      await browser.close();
+      if (wrapper) fs.rmSync(wrapper, { force: true });
+    },
   };
 }

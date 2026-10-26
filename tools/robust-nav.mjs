@@ -261,6 +261,23 @@ for (let wi = 0; wi < 12; wi++) {
   const before = cells;
   const after = [...world.grid.values()].reduce((s, c) => s + c.length, 0);
   console.log(`collision: ${before} cell entries for 50 boxes after 2000 moves, ${after} after removing 20`);
+
+  // Non-finite / absurd inputs (a NaN or Infinity position upstream) must return, not loop over an
+  // unbounded range of hash cells (this used to hang the tab: no try/catch can stop that).
+  const t0 = performance.now();
+  const all = world.colliders.length;
+  const q = (...a) => world.query(...a).length;
+  if (q(-Infinity, -Infinity, Infinity, Infinity) !== all) fail('query(+-Infinity) does not return every collider');
+  if (q(-1e9, -1e9, 1e9, 1e9) !== all) fail('query(+-1e9) does not return every collider');
+  if (q(NaN, 0, 10, 10) !== 0) fail('query(NaN) returned colliders');
+  const inf = { x: Infinity, y: 0, z: 0 };
+  world.resolveCircle(inf, 0.4);
+  world.segmentBlocked({ x: 50, y: 1, z: 50 }, { x: 50, y: 1, z: -Infinity });
+  world.raycast({ x: 50, y: 1, z: 50 }, { x: 0, y: 0, z: -1 }, 1e9);
+  world.pointBlocked(Infinity, 1, -Infinity, 1);
+  const ms = performance.now() - t0;
+  if (ms > 200) fail(`non-finite collision queries took ${ms.toFixed(0)} ms`);
+  console.log(`collision: non-finite / huge queries returned in ${ms.toFixed(1)} ms`);
 }
 
 console.log(`nav: ${n} searches; JPS ${tJps.toFixed(1)} ms vs A* ${tRef.toFixed(1)} ms (${(tRef / Math.max(tJps, 1e-6)).toFixed(1)}x)`);
