@@ -316,6 +316,13 @@ export class Game {
     this._raf = requestAnimationFrame(loop);
   }
 
+  // Halts the real-time loop (tools that drive the world with simulate() and render on demand;
+  // start() resumes it).
+  stop() {
+    if (this._raf !== null) cancelAnimationFrame(this._raf);
+    this._raf = null;
+  }
+
   frame(now) {
     let dt = (now - this.last) / 1000;
     this.last = now;

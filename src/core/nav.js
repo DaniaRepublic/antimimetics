@@ -91,7 +91,6 @@ export class NavGrid {
     this.closed = new Uint32Array(n);
     this.searchId = 0;
     this.heap = new MinHeap();
-    this.stack = new Int32Array(1024);
     // Counters for tools/perf-*.mjs and the debug overlay.
     this.stats = { searches: 0, expansions: 0, fallbacks: 0, lastMs: 0, maxMs: 0, totalMs: 0 };
   }
@@ -109,6 +108,7 @@ export class NavGrid {
     }
     for (const col of this.world.colliders) this._rasterise(col);
     this._labelRegions();
+    this._buildJumps();
   }
 
   _blocks(col) {
@@ -154,39 +154,90 @@ export class NavGrid {
     const list = this.world.query(minX - pad, minZ - pad, maxX + pad, maxZ + pad).slice();
     for (const col of list) this._rasterise(col, clip);
     this._labelRegions();
+    this._buildJumps();
   }
 
-  // Flood-fills 8-connected (no corner cutting) walkable components. Border cells are never
-  // walkable, so neighbour indices of a walkable cell never leave the grid.
+  // Labels connected walkable components (8-connected without corner cutting, which is the same
+  // as 4-connected: a diagonal step needs both orthogonal cells open). Run-based: each row is
+  // split into runs of walkable cells, runs that overlap a run of the previous row are merged
+  // (union-find), then ids are numbered in row-major order of first appearance, exactly as a
+  // cell-by-cell flood fill would number them. Several times faster than a flood fill on the
+  // full level grid, which matters because rebuildArea() (the gate) relabels everything.
   _labelRegions() {
     const { w, h, walk, region } = this;
-    const n = w * h;
-    region.fill(-1);
-    let stack = this.stack;
-    let next = 0;
-    for (let i = 0; i < n; i++) {
-      if (!walk[i] || region[i] >= 0) continue;
-      region[i] = next;
-      let top = 0;
-      stack[top++] = i;
-      while (top) {
-        const c = stack[--top];
-        if (top + 8 >= stack.length) {
-          const grown = new Int32Array(stack.length * 2);
-          grown.set(stack);
-          stack = this.stack = grown;
-        }
-        const e = walk[c + 1], wv = walk[c - 1], s = walk[c + w], nn = walk[c - w];
-        if (e && region[c + 1] < 0) { region[c + 1] = next; stack[top++] = c + 1; }
-        if (wv && region[c - 1] < 0) { region[c - 1] = next; stack[top++] = c - 1; }
-        if (s && region[c + w] < 0) { region[c + w] = next; stack[top++] = c + w; }
-        if (nn && region[c - w] < 0) { region[c - w] = next; stack[top++] = c - w; }
-        if (e && s && walk[c + w + 1] && region[c + w + 1] < 0) { region[c + w + 1] = next; stack[top++] = c + w + 1; }
-        if (e && nn && walk[c - w + 1] && region[c - w + 1] < 0) { region[c - w + 1] = next; stack[top++] = c - w + 1; }
-        if (wv && s && walk[c + w - 1] && region[c + w - 1] < 0) { region[c + w - 1] = next; stack[top++] = c + w - 1; }
-        if (wv && nn && walk[c - w - 1] && region[c - w - 1] < 0) { region[c - w - 1] = next; stack[top++] = c - w - 1; }
+    let cap = this._runCap || 4096;
+    let rs = this._rs, re = this._re, row = this._row, uf = this._uf;
+    if (!rs) {
+      rs = new Int32Array(cap);
+      re = new Int32Array(cap);
+      row = new Int32Array(cap);
+      uf = new Int32Array(cap);
+    }
+    const find = (a) => {
+      while (uf[a] !== a) {
+        uf[a] = uf[uf[a]];
+        a = uf[a];
       }
-      next++;
+      return a;
+    };
+    let n = 0, prevFirst = 0, prevEnd = 0;
+    for (let z = 0; z < h; z++) {
+      const base = z * w;
+      const first = n;
+      let x = 0;
+      while (x < w) {
+        if (!walk[base + x]) {
+          x++;
+          continue;
+        }
+        const s = x;
+        while (x < w && walk[base + x]) x++;
+        if (n === cap) {
+          cap *= 2;
+          const grow = (a) => {
+            const b = new Int32Array(cap);
+            b.set(a);
+            return b;
+          };
+          rs = grow(rs);
+          re = grow(re);
+          row = grow(row);
+          uf = grow(uf);
+        }
+        rs[n] = s;
+        re[n] = x;
+        row[n] = z;
+        uf[n] = n;
+        n++;
+      }
+      // Merge with overlapping runs of the previous row (both lists are sorted by x).
+      let a = prevFirst, b = first;
+      while (a < prevEnd && b < n) {
+        if (re[a] > rs[b] && re[b] > rs[a]) {
+          const ra = find(a), rb = find(b);
+          if (ra !== rb) {
+            if (ra < rb) uf[rb] = ra;
+            else uf[ra] = rb;
+          }
+        }
+        if (re[a] < re[b]) a++;
+        else b++;
+      }
+      prevFirst = first;
+      prevEnd = n;
+    }
+    this._rs = rs;
+    this._re = re;
+    this._row = row;
+    this._uf = uf;
+    this._runCap = cap;
+    region.fill(-1);
+    const id = new Int32Array(n).fill(-1);
+    let next = 0;
+    for (let r = 0; r < n; r++) {
+      const root = find(r);
+      if (id[root] < 0) id[root] = next++;
+      region.fill(id[root], row[r] * w + rs[r], row[r] * w + re[r]);
     }
     this.regionCount = next;
   }
@@ -413,8 +464,35 @@ export class NavGrid {
   // neighbours open): straight jumps stop where a side opens up behind an obstacle; diagonal
   // jumps stop where either of their straight components finds a jump point.
 
-  // Straight jump from i (exclusive) along (dx, 0) or (0, dz). Returns the jump point or -1.
+  // Straight jump from i (exclusive) along (dx, 0) or (0, dz): the first jump point or the goal,
+  // whichever comes first, or -1 at a wall. O(1): reads the precomputed distance tables.
   _jumpStraight(i, dx, dz, goal) {
+    const w = this.w;
+    let d, step;
+    if (dx > 0) {
+      d = this._jE[i];
+      step = 1;
+    } else if (dx < 0) {
+      d = this._jW[i];
+      step = -1;
+    } else if (dz > 0) {
+      d = this._jS[i];
+      step = w;
+    } else {
+      d = this._jN[i];
+      step = -w;
+    }
+    const reach = d > 0 ? d : -d;
+    const off = goal - i;
+    if (dx !== 0 ? (goal - (goal % w)) === (i - (i % w)) : goal % w === i % w) {
+      const k = off / step;
+      if (k >= 1 && k <= reach) return goal;
+    }
+    return d > 0 ? i + d * step : -1;
+  }
+
+  // The scanning version of _jumpStraight (the reference the tables are checked against).
+  _scanStraight(i, dx, dz, goal) {
     const walk = this.walk, w = this.w;
     if (dx !== 0) {
       for (;;) {
@@ -430,6 +508,70 @@ export class NavGrid {
       if (!walk[i]) return -1;
       if (i === goal) return i;
       if ((walk[i - 1] && !walk[i - 1 - step]) || (walk[i + 1] && !walk[i + 1 - step])) return i;
+    }
+  }
+
+  // Jump tables (JPS+): for every cell and each straight direction, k > 0 = the next jump point
+  // (a cell where a side opens up behind an obstacle) is k steps away; k <= 0 = no jump point,
+  // -k walkable steps then a wall. Rebuilt with the walkable grid (build / rebuildArea), ~1 ms.
+  _buildJumps() {
+    const { w, h, walk } = this;
+    const n = w * h;
+    if (!this._jE || this._jE.length !== n) {
+      const T = Math.max(w, h) < 32000 ? Int16Array : Int32Array;
+      this._jE = new T(n);
+      this._jW = new T(n);
+      this._jS = new T(n);
+      this._jN = new T(n);
+    }
+    const E = this._jE, W = this._jW, S = this._jS, N = this._jN;
+    E.fill(0);
+    W.fill(0);
+    S.fill(0);
+    N.fill(0);
+    // Horizontal moves: arriving at j from i, j is a jump point if a side of j is open while
+    // the same side of i is blocked.
+    for (let z = 1; z < h - 1; z++) {
+      const base = z * w;
+      for (let x = w - 2; x >= 0; x--) {
+        const i = base + x, j = i + 1;
+        if (!walk[j]) E[i] = 0;
+        else if ((walk[j - w] && !walk[i - w]) || (walk[j + w] && !walk[i + w])) E[i] = 1;
+        else {
+          const d = E[j];
+          E[i] = d > 0 ? d + 1 : d - 1;
+        }
+      }
+      for (let x = 1; x < w; x++) {
+        const i = base + x, j = i - 1;
+        if (!walk[j]) W[i] = 0;
+        else if ((walk[j - w] && !walk[i - w]) || (walk[j + w] && !walk[i + w])) W[i] = 1;
+        else {
+          const d = W[j];
+          W[i] = d > 0 ? d + 1 : d - 1;
+        }
+      }
+    }
+    // Vertical moves.
+    for (let x = 1; x < w - 1; x++) {
+      for (let z = h - 2; z >= 0; z--) {
+        const i = z * w + x, j = i + w;
+        if (!walk[j]) S[i] = 0;
+        else if ((walk[j - 1] && !walk[i - 1]) || (walk[j + 1] && !walk[i + 1])) S[i] = 1;
+        else {
+          const d = S[j];
+          S[i] = d > 0 ? d + 1 : d - 1;
+        }
+      }
+      for (let z = 1; z < h; z++) {
+        const i = z * w + x, j = i - w;
+        if (!walk[j]) N[i] = 0;
+        else if ((walk[j - 1] && !walk[i - 1]) || (walk[j + 1] && !walk[i + 1])) N[i] = 1;
+        else {
+          const d = N[j];
+          N[i] = d > 0 ? d + 1 : d - 1;
+        }
+      }
     }
   }
 

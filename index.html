@@ -33,11 +33,17 @@
     position: fixed; inset: 0; display: grid; place-items: center;
     color: var(--ink-dim); letter-spacing: 0.3em; font-size: 12px;
   }
+  /* Opacity animates on the compositor, so it keeps pulsing while the city is built (one long
+     synchronous task): the page visibly is not frozen. */
+  #boot span { animation: boot-pulse 1.6s ease-in-out infinite; }
+  @keyframes boot-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { #boot span { animation: none; } }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div id="boot">LOADING</div>
+<div id="boot" role="status"><span>LOADING</span></div>
+<noscript><p style="position:fixed;inset:0;display:grid;place-items:center;margin:0">This game needs JavaScript.</p></noscript>
 <!-- BUNDLE -->
 </body>
 </html>

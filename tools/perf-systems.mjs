@@ -39,6 +39,7 @@ const moduleAt = (line) => {
 
 const h = await launch({ html, query: 'autostart&quality=0&profile' });
 await h.eval(installBot, { spikes: false });
+await h.eval(() => window.__game.stop()); // simulate only; --frames renders on demand
 const cdp = await h.top.context().newCDPSession(h.top);
 await cdp.send('Profiler.enable');
 await cdp.send('Profiler.setSamplingInterval', { interval: 250 });
@@ -92,7 +93,11 @@ for (let e = 0; e < EPISODES; e++) {
   await run(6);
   await run(16, 'caught');
   await run(4);
-  for (let f = 0; f < FRAMES; f++) await h.eval(() => new Promise((r) => requestAnimationFrame(() => r())));
+  if (FRAMES) {
+    await h.eval(() => window.__game.start());
+    for (let f = 0; f < FRAMES; f++) await h.eval(() => new Promise((r) => requestAnimationFrame(() => r())));
+    await h.eval(() => window.__game.stop());
+  }
 }
 const { profile } = await cdp.send('Profiler.stop');
 const alloc = ALLOC ? (await cdp.send('HeapProfiler.stopSampling')).profile : null;

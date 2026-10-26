@@ -82,6 +82,59 @@ for (let wi = 0; wi < WORLDS; wi++) {
     if (Math.abs(last.x - ends.goal0.x) > 1e-9 || Math.abs(last.z - ends.goal0.z) > 1e-9) fail(`world ${wi} q${q}: path does not end at the goal`);
   }
 
+  // jump tables: every straight jump equals the scanning reference (random cells, goals, directions)
+  {
+    const walkable = [];
+    for (let i = 0; i < nav.w * nav.h; i++) if (nav.walk[i]) walkable.push(i);
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (let q = 0; q < 3000; q++) {
+      const i = walkable[Math.floor(rng() * walkable.length)];
+      const [dx, dz] = dirs[q % 4];
+      // goals: random, or on the same line (so the goal check is exercised)
+      let goal = walkable[Math.floor(rng() * walkable.length)];
+      if (q % 3 === 0) goal = i + (dx + dz * nav.w) * (1 + Math.floor(rng() * 40));
+      const a = nav._jumpStraight(i, dx, dz, goal), b = nav._scanStraight(i, dx, dz, goal);
+      if (a !== b) {
+        fail(`world ${wi}: jump table ${a} != scan ${b} (cell ${i}, dir ${dx},${dz}, goal ${goal})`);
+        break;
+      }
+    }
+  }
+
+  // regions: compare with the original cell-by-cell flood fill (8-connected, no corner cutting)
+  {
+    const { w, h, walk } = nav;
+    const ref = new Int32Array(w * h).fill(-1);
+    const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+    let next = 0;
+    for (let i = 0; i < w * h; i++) {
+      if (!walk[i] || ref[i] >= 0) continue;
+      ref[i] = next;
+      const stack = [i];
+      while (stack.length) {
+        const c = stack.pop();
+        const cx = c % w, cz = (c - cx) / w;
+        for (const [dx, dz] of N8) {
+          const nx = cx + dx, nz = cz + dz;
+          if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
+          const ni = nz * w + nx;
+          if (!walk[ni] || ref[ni] >= 0) continue;
+          if (dx && dz && (!walk[cz * w + nx] || !walk[nz * w + cx])) continue;
+          ref[ni] = next;
+          stack.push(ni);
+        }
+      }
+      next++;
+    }
+    if (next !== nav.regionCount) fail(`world ${wi}: ${nav.regionCount} regions, reference ${next}`);
+    for (let i = 0; i < w * h; i++) {
+      if (ref[i] !== nav.region[i]) {
+        fail(`world ${wi}: region label differs at cell ${i} (${nav.region[i]} vs ${ref[i]})`);
+        break;
+      }
+    }
+  }
+
   // nearestWalkable: compare with the original full-square scan
   const naive = (x, z, maxCells) => {
     const cx = nav.cellX(x), cz = nav.cellZ(z);
@@ -110,6 +163,50 @@ for (let wi = 0; wi < WORLDS; wi++) {
     const a = nav.nearestWalkable(x, z, 12), b = naive(x, z, 12);
     if (JSON.stringify(a) !== JSON.stringify(b)) fail(`world ${wi}: nearestWalkable(${x.toFixed(2)}, ${z.toFixed(2)}) ${JSON.stringify(a)} vs ${JSON.stringify(b)}`);
   }
+}
+
+// --- region labelling cost on a level-sized grid (80 m x 461 m at 0.5 m) -----------------------
+{
+  const rng = makeRng(99);
+  const world = new CollisionWorld();
+  for (let i = 0; i < 400; i++) world.addBox({ x: rng() * 80, z: rng() * 461, w: 1 + rng() * 12, d: 1 + rng() * 12, h: 3, rot: rng() * 3 });
+  const nav = new NavGrid(world, { minX: 0, maxX: 80, minZ: 0, maxZ: 461 }, { cell: 0.5, agentRadius: 0.45 });
+  nav.build();
+  const { w, h, walk } = nav;
+  const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  const original = () => { // the pre-polish flood fill, for comparison
+    const region = new Int32Array(w * h).fill(-1);
+    let next = 0;
+    const stack = [];
+    for (let i = 0; i < w * h; i++) {
+      if (!walk[i] || region[i] >= 0) continue;
+      region[i] = next;
+      stack.push(i);
+      while (stack.length) {
+        const c = stack.pop();
+        const cx = c % w, cz = (c - cx) / w;
+        for (const [dx, dz] of N8) {
+          const nx = cx + dx, nz = cz + dz;
+          if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
+          const ni = nz * w + nx;
+          if (!walk[ni] || region[ni] >= 0) continue;
+          if (dx && dz && (!walk[cz * w + nx] || !walk[nz * w + cx])) continue;
+          region[ni] = next;
+          stack.push(ni);
+        }
+      }
+      next++;
+    }
+    return next;
+  };
+  const time = (fn) => {
+    for (let i = 0; i < 3; i++) fn();
+    const t0 = performance.now();
+    for (let i = 0; i < 10; i++) fn();
+    return (performance.now() - t0) / 10;
+  };
+  const a = time(original), b = time(() => nav._labelRegions());
+  console.log(`regions on a ${w}x${h} grid: flood fill ${a.toFixed(1)} ms, runs + union-find ${b.toFixed(1)} ms`);
 }
 
 // --- CollisionWorld: move / remove keep queries consistent ----------------------------------

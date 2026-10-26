@@ -7,9 +7,8 @@
 // profile, then reports growth between the end of the warm-up and the end of the run, and checks
 // a few state-machine edge cases (respawn mid-call, the exit during a grab, a catch after winning).
 //
-// The world is advanced in short chunks (<= 1 s of game time per page.evaluate): a long
-// synchronous simulate() with live audio builds voices far faster than real time, and their
-// native memory can only be reclaimed between tasks (multi-GB renderer spikes otherwise).
+// The real-time loop is stopped (game.stop()) and the world advanced in short chunks (<= 1 s of
+// game time per page.evaluate), rendering real frames only every few episodes.
 //   node tools/robust-session.mjs [--minutes 15] [--html dist/index.html] [--mute] [--quiet]
 import { launch } from './harness.mjs';
 import { chromeMemory } from './robust-proc.mjs';
@@ -30,6 +29,9 @@ const h = await launch({
 const t0 = Date.now();
 
 await h.eval(installBot);
+// The real-time loop would render (slow SwiftShader) frames between evaluates: drive the world with
+// the bot alone and render on demand (frames()).
+await h.eval(() => window.__game.stop());
 
 
 const rows = [];
@@ -74,7 +76,9 @@ const snapshot = async (label) => {
   return m;
 };
 const frames = async (n) => {
+  await h.eval(() => window.__game.start());
   for (let i = 0; i < n; i++) await h.eval(() => new Promise((r) => requestAnimationFrame(() => r())));
+  await h.eval(() => window.__game.stop());
 };
 
 await snapshot('start');
