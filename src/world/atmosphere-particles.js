@@ -170,7 +170,7 @@ export class Particles {
   prepare(camera, heightPx) {
     const scale = heightPx / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
     for (const layer of [this.ash, this.embers]) {
-      layer.uniforms.uCam.value.copy(camera.position);
+      layer.uniforms.uCam.value.setFromMatrixPosition(camera.matrixWorld);
       layer.uniforms.uScale.value = scale;
     }
   }

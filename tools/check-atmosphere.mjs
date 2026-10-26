@@ -147,6 +147,9 @@ if (unit) {
     const h = a.registerLightSource({ pos: { x: 500, y: 2, z: 500 } });
     r.defaultsOk = h.enabled === true && typeof h.intensity === 'number';
     r.defaultLevel = at(500, 500);
+    // registering the same handle twice is a no-op
+    const n0 = a.lights.records.length;
+    r.reRegisterSame = a.registerLightSource(h) === h && a.lights.records.length === n0 && at(500, 500) === r.defaultLevel;
     return r;
   });
   console.log('lightLevelAt', JSON.stringify(ll));
@@ -159,6 +162,7 @@ if (unit) {
   check(ll.fireDisabled < 0.17, `disabled fire gives no light (${ll.fireDisabled})`);
   check(ll.brokenLampRange[1] - ll.brokenLampRange[0] > 0.2, `flicker shows in light level (${ll.brokenLampRange})`);
   check(ll.defaultsOk && ll.defaultLevel > 0.5, `defaults for missing fields (${ll.defaultLevel})`);
+  check(ll.reRegisterSame, 're-registering the same handle does not duplicate it');
 
   // --- every fog-using material type still compiles with the patched fog chunks, including
   // custom ShaderMaterials that did (or did not) merge UniformsLib.fog
@@ -224,12 +228,25 @@ if (unit) {
 
   // --- quality levels and resizing keep rendering cleanly
   const errBefore = sb.errors.length;
+  const scales = [];
   for (const q of [0, 1, 2]) {
-    await sb.eval((level) => {
-      window.__game.atmosphere.setQuality(level);
+    scales.push(await sb.eval((level) => {
+      const g = window.__game;
+      g.atmosphere.setQuality(level);
       window.__sandbox.render();
-    }, q);
+      return +(g.atmosphere.post.scenePass.target.width / g.renderer.domElement.width).toFixed(2);
+    }, q));
   }
+  if (want('street_q0')) {
+    await sb.eval(() => {
+      window.__game.atmosphere.setQuality(0);
+      window.__sandbox.setView('street');
+      window.__game.renderRequested = true;
+    });
+    await sb.shot(path.join(out, 'sandbox-street_q0.png'));
+    await sb.eval(() => window.__game.atmosphere.setQuality(2));
+  }
+  check(scales[0] <= 0.86 && scales[0] >= 0.5 && scales[1] === 1 && scales[2] === 1, `quality 0 renders the post chain at a reduced pixel ratio (${scales})`);
   await sb.page.setViewportSize({ width: 960, height: 600 });
   await sb.page.waitForTimeout(300);
   const resized = await sb.eval(() => {
@@ -248,6 +265,10 @@ if (unit) {
     const g = window.__game;
     const a = g.atmosphere;
     let maxLights = 0, minLights = 99, pops = 0, reassign = 0;
+    // start the walk from a settled pool at its first position (getting there is a camera cut)
+    g.debugCamera = { pos: [0, 1.65, 5], target: [0, 1.6, -5] };
+    window.__sandbox.placeCamera();
+    g.simulate(1);
     const prev = a.lights.slots.map((s) => ({ rec: s.rec, i: s.light.intensity }));
     for (let i = 0; i <= 600; i++) {
       const z = 5 - i * 0.4;
@@ -273,6 +294,26 @@ if (unit) {
   console.log('pool', JSON.stringify(pool));
   check(pool.maxLights === pool.minLights && pool.maxLights <= 6, `constant point light count (${pool.maxLights})`);
   check(pool.pops === 0 && pool.reassign > 0, `slots reassigned only when faded out (${pool.reassign} reassignments, ${pool.pops} pops)`);
+
+  // --- a camera cut (respawn, title -> play) snaps the pool: the new place is lit on the next
+  // update instead of going dark while old lights fade out and new ones fade in
+  const cut = await sb.eval(() => {
+    const g = window.__game;
+    const a = g.atmosphere;
+    const lit = () => a.lights.slots.filter((s) => s.rec && s.light.intensity > 0.3 * s.rec.src.intensity * s.rec.flick).length;
+    const near = (z) => a.lights.slots.filter((s) => s.rec && Math.abs(s.rec.src.pos.z - z) < 30).length;
+    g.debugCamera = { pos: [0, 1.65, -230], target: [0, 1.6, -260] };
+    window.__sandbox.placeCamera();
+    g.simulate(1);
+    g.debugCamera = { pos: [0, 1.65, -10], target: [0, 1.6, -30] };
+    window.__sandbox.placeCamera();
+    g.simulate(1 / 30);
+    const r = { litAfterCut: lit(), nearAfterCut: near(-10) };
+    g.debugCamera = null;
+    return r;
+  });
+  console.log('cut', JSON.stringify(cut));
+  check(cut.litAfterCut >= 3 && cut.nearAfterCut >= 2, `camera cut snaps the light pool (${cut.litAfterCut} lit, ${cut.nearAfterCut} near, one frame after)`);
 
   // --- cost
   const cost = await sb.eval(() => {
@@ -346,6 +387,23 @@ if (!args.includes('--skip-game')) {
   if (want('game-death')) await gm.shot(path.join(out, 'game-death07.png'));
   await gm.eval(() => window.__game.atmosphere.setDeath(0));
   console.log('game', JSON.stringify(state.info));
+  // respawn is a clean cut; the optional brightness setting reaches the grade
+  const resp = await gm.eval(() => {
+    const g = window.__game;
+    const a = g.atmosphere;
+    a.setDeath(1);
+    a.threat = 0.9;
+    g.respawn();
+    g.tick(1 / 30);
+    g.settings.brightness = 1.4;
+    g.tick(1 / 30);
+    const gamma = a.post.grade.uniforms.uGamma.value;
+    delete g.settings.brightness;
+    g.tick(1 / 30);
+    return { death: a.death, threat: a.threat, state: g.state, gamma, gammaDefault: a.post.grade.uniforms.uGamma.value };
+  });
+  check(resp.death === 0 && resp.threat < 0.05 && resp.state === 'playing', `respawn clears death + threat (${JSON.stringify(resp)})`);
+  check(Math.abs(resp.gamma - 1 / 1.4) < 1e-6 && resp.gammaDefault === 1, `settings.brightness drives the grade gamma (${resp.gamma.toFixed(3)})`);
   check(gm.errors.length === 0, `game console clean (${gm.errors.length} errors)`);
   if (gm.errors.length) console.log(gm.errors.join('\n'));
   await gm.close();

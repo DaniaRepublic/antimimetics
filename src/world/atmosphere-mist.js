@@ -184,6 +184,9 @@ float viewDist( vec2 uv ) {
 
 void main() {
   vec4 scene = texture2D( tScene, vUv );
+  // One NaN/Inf pixel from any material would be smeared into a black blot by the bloom blur:
+  // scrub it here, where every frame passes through, and cap runaway HDR values.
+  scene.rgb = any( isnan( scene.rgb ) ) ? vec3( 0.0 ) : clamp( scene.rgb, 0.0, 64.0 );
   if ( uEnabled < 0.5 ) { gl_FragColor = scene; return; }
   float z = viewDist( vUv );
   vec2 st = vUv * uMistSize - 0.5;
@@ -243,6 +246,11 @@ void main() {
   float dist = length( rel.xz );
   vec3 e = abs( rel ) / ( 0.5 * uBox );
   vAlpha = ( 1.0 - smoothstep( 0.6, 1.0, max( e.x, e.z ) ) ) * smoothstep( 3.5, 10.0, dist ) * ( 1.0 - smoothstep( 6.0, 14.0, uCam.y ) );
+  if ( vAlpha < 0.004 ) {
+    // invisible sheet (too close, at the wrap edge, or camera above the mist): rasterise nothing
+    gl_Position = vec4( 2.0, 2.0, 2.0, 1.0 );
+    return;
+  }
   vColor = uMistHigh;
   for ( int j = 0; j < 6; j ++ ) {
     vec3 dl = uLightPos[ j ] - c;
@@ -270,13 +278,16 @@ varying vec3 vColor;
 varying vec4 vSeed;
 
 void main() {
+  // cheapest rejections first: these sheets cover the screen several times over
   float r = length( vCorner );
-  float shape = smoothstep( 1.0, 0.25, r );
-  vec3 q = vec3( vCorner * 0.22 + vSeed.xy * 7.0, uTime * 0.012 + vSeed.z );
-  float n = texture( tNoise, q ).r * 0.65 + texture( tNoise, q * 2.7 ).r * 0.35;
-  float a = shape * smoothstep( 0.35, 0.8, n ) * vAlpha * uOpacity * ( 1.0 + 0.4 * uCall );
+  float a = smoothstep( 1.0, 0.25, r ) * vAlpha * uOpacity * ( 1.0 + 0.4 * uCall );
+  if ( a < 0.003 ) discard;
   float sceneZ = - perspectiveDepthToViewZ( texture2D( tDepth, gl_FragCoord.xy / uResolution ).x, uNear, uFar );
   a *= smoothstep( 0.0, 2.2, sceneZ - vViewZ );
+  if ( a < 0.003 ) discard;
+  vec3 q = vec3( vCorner * 0.22 + vSeed.xy * 7.0, uTime * 0.012 + vSeed.z );
+  float n = texture( tNoise, q ).r * 0.65 + texture( tNoise, q * 2.7 ).r * 0.35;
+  a *= smoothstep( 0.35, 0.8, n );
   if ( a < 0.003 ) discard;
   gl_FragColor = vec4( vColor, a );
 }

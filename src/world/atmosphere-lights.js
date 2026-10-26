@@ -5,6 +5,10 @@ const BUCKET = 16; // m, spatial hash cell for stealth-light queries
 const BUCKET_MIN_SOURCES = 12; // below this a linear scan is cheaper than the hash
 const FADE_RATE = 2.6; // pool fade in/out per second (~0.4 s)
 const ON_RATE = 28; // enabled toggles: fast but not a hard pop (alarm blinks stay crisp)
+// A camera jump this large in one update (respawn, title -> play, teleport) is a cut, not a walk:
+// the pool snaps to the new surroundings instead of fading the old lights out and the new ones in
+// (which would leave the new place unlit for ~0.8 s).
+const SNAP_DISTANCE = 15;
 
 const _c = new THREE.Color();
 const _flick = { shimmer: 1, drop: 1 };
@@ -41,10 +45,19 @@ export class LightPool {
     this._seed = 1;
     this._frame = 0;
     this._ranked = [];
+    this._lastCam = null;
+    this._snapNext = true; // first update: light the start position immediately
+  }
+
+  // Next update assigns the pool instantly (no fades). Called on respawn; camera cuts are detected.
+  snap() {
+    this._snapNext = true;
   }
 
   register(src) {
     if (!src || typeof src !== 'object') throw new Error('registerLightSource: expected an object');
+    // Registering the same handle again (e.g. from a level's resetDynamic) must not double its light.
+    if (this.sources.includes(src)) return src;
     if (!src.pos) src.pos = new THREE.Vector3();
     if (src.enabled === undefined) src.enabled = true;
     if (src.intensity === undefined) src.intensity = 30;
@@ -103,6 +116,10 @@ export class LightPool {
   update(dt, time, camPos, camFwd) {
     const recs = this.records;
     const onK = 1 - Math.exp(-ON_RATE * dt);
+    let snap = this._snapNext;
+    if (this._lastCam) snap ||= this._lastCam.distanceToSquared(camPos) > SNAP_DISTANCE * SNAP_DISTANCE;
+    else this._lastCam = new THREE.Vector3();
+    this._lastCam.copy(camPos);
     // --- per-source state + relevance score
     let moved = false;
     for (const r of recs) {
@@ -150,14 +167,14 @@ export class LightPool {
     const stamp = ++this._frame;
     for (const r of ranked) r.wanted = stamp;
 
-    // --- fade slots; free a slot only once fully faded so nothing pops
+    // --- fade slots; free a slot only once fully faded so nothing pops (unless this is a cut)
     const fadeK = FADE_RATE * dt;
     for (const slot of this.slots) {
       const r = slot.rec;
       if (!r) continue;
-      if (r.wanted === stamp) r.weight = Math.min(1, r.weight + fadeK);
+      if (r.wanted === stamp) r.weight = snap ? 1 : Math.min(1, r.weight + fadeK);
       else {
-        r.weight = Math.max(0, r.weight - fadeK);
+        r.weight = snap ? 0 : Math.max(0, r.weight - fadeK);
         if (r.weight <= 0) {
           r.slot = null;
           slot.rec = null;
@@ -170,8 +187,9 @@ export class LightPool {
       if (!free) break;
       free.rec = r;
       r.slot = free;
-      r.weight = 0;
+      r.weight = snap ? 1 : 0;
     }
+    this._snapNext = false;
 
     // --- drive the real lights
     const supply = clamp(1 - this.sag, 0, 1);

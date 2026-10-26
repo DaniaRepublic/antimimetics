@@ -31,10 +31,12 @@ void main() {
   vec3 col = atmoFogTint( rd, uHorizon );
 
   // Burning districts beyond the skyline: slow, uneven glow patches hugging the horizon.
-  float az = atan( rd.z, rd.x ) / 6.2831853;
+  // atan(0, 0) is undefined (NaN on some GPUs, and bloom would smear a NaN pixel): guard the zenith
+  float az = abs( rd.x ) + abs( rd.z ) > 1e-6 ? atan( rd.z, rd.x ) / 6.2831853 : 0.0;
   float fireN = n3( vec3( az * 3.0, 0.21, uTime * 0.004 ) ) * 0.7 + n3( vec3( az * 9.0, 0.63, uTime * 0.011 ) ) * 0.3;
   float fires = smoothstep( 0.5, 0.85, fireN ) * exp( - abs( up ) * 38.0 );
-  col += uHorizon * fires * ( 0.9 + 0.25 * sin( uTime * 1.3 + az * 40.0 ) );
+  // whole cycles around the horizon (az spans one unit) so there is no seam behind atan's cut
+  col += uHorizon * fires * ( 0.9 + 0.25 * sin( uTime * 1.3 + az * 6.2831853 * 6.0 ) );
 
   // Cloud deck: planar projection, banded, domain-warped; lit from below by the burning city.
   float cover = 0.0;
@@ -113,7 +115,7 @@ export class Sky {
 
   // Keep the dome around the camera, comfortably inside the far plane.
   follow(camera) {
-    this.mesh.position.copy(camera.position);
+    this.mesh.position.setFromMatrixPosition(camera.matrixWorld); // world position, even if parented
     this.mesh.scale.setScalar(camera.far * 0.6);
   }
 }

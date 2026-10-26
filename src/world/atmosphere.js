@@ -58,7 +58,10 @@ function heartbeat(x) {
 //   flicker x on/off, 0..1) for syncing emissive meshes. Only the 6 most relevant sources get
 //   a real PointLight; the rest still count for lightLevelAt and should glow via emissives.
 // - Extras beyond the contract: fogFactor(from, to), unregisterLightSource(handle),
-//   setQuality(0..2) (?quality=N pins it), getDebugInfo().
+//   setQuality(0..2) (?quality=N pins it), getDebugInfo(), and an optional
+//   game.settings.brightness (0.5..2, default 1) read every frame for a pause-menu slider.
+// - Owns scene.fog / scene.background: change fog thickness through `fogDensity`, never by
+//   replacing scene.fog (a replaced fog is put back, keeping its density).
 export class Atmosphere {
   constructor(game) {
     installAtmosphereFog();
@@ -82,6 +85,7 @@ export class Atmosphere {
     // --- fog (scene.fog.color *is* fogColor; mutated in place so references stay live)
     scene.fog = new THREE.FogExp2(LOOK.horizon.getHex(THREE.LinearSRGBColorSpace), LOOK.fogDensity);
     scene.fog.color.copy(LOOK.horizon);
+    this.fog = scene.fog;
     this.fogColor = scene.fog.color;
     this.skyGlowColor = LOOK.skyGlow.clone();
     this.fogHeightFalloff = LOOK.fogFalloff;
@@ -122,15 +126,20 @@ export class Atmosphere {
 
     this.writeFogUniforms(0);
 
-    // --- quality: 2 = everything, 1 = no MSAA, 0 = also fewer mist steps, no wisps, no bloom.
+    // --- quality: 2 = everything, 1 = no MSAA, 0 = also fewer mist steps, no wisps and the post
+    // chain at a reduced pixel ratio (<= 0.85, upscaled by the final pass) - the lever that
+    // matters on integrated GPUs with high-DPI screens. Bloom stays: it is cheap at quarter
+    // resolution and fires/eyes rely on it.
     // ?quality=N pins it; otherwise it steps down if the game runs slowly for a few seconds.
     this.quality = 2;
+    this.renderScale = 1;
     this._slowTime = 0;
     this._qualityCooldown = 8;
-    const pinned = game.params?.get?.('quality');
+    const raw = game.params?.get?.('quality');
+    const pinned = raw != null && raw !== '' && Number.isFinite(Number(raw)) ? Number(raw) : null;
     const automated = typeof navigator !== 'undefined' && navigator.webdriver;
     this.autoQuality = pinned == null && !automated;
-    if (pinned != null) this.setQuality(Number(pinned));
+    if (pinned != null) this.setQuality(pinned);
 
     // --- the leviathan drives the call/footfall directly, but listen to its events too, so the
     // sky still answers if a caller only emits events.
@@ -142,8 +151,13 @@ export class Atmosphere {
       if (this._callEvt) this._callEvt.released = true;
     });
     bus?.on('leviathan:footfall', (e) => this.onFootfall(e?.intensity ?? 0.5));
+    // Respawn is a cut: no death tint, no leftover chase vignette or footfall, lights snap.
     bus?.on('game:respawn', () => {
       this.death = 0;
+      this.threat = 0;
+      this.footfall = 0;
+      this._footfallAge = 99;
+      this.lights.snap();
     });
   }
 
@@ -183,12 +197,18 @@ export class Atmosphere {
   setQuality(level) {
     const q = clamp(Math.round(Number(level)), 0, 2);
     this.quality = Number.isFinite(q) ? q : 2;
-    const pr = this.game.renderer.getPixelRatio();
-    const maxSamples = this.game.renderer.capabilities.maxSamples || 0;
+    const r = this.game.renderer;
+    const pr = r.getPixelRatio();
+    const maxSamples = r.capabilities.maxSamples || 0;
     this.post.scenePass.setSamples(this.quality >= 2 && pr < 1.25 ? Math.min(4, maxSamples) : 0);
     this.post.mistPass.setSteps(this.quality >= 1 ? 12 : 7);
     this.post.mistPass.wispsEnabled = this.quality >= 1;
-    this.post.bloom.enabled = this.quality >= 1;
+    const scale = this.quality === 0 ? Math.min(1, 0.85 / pr) : 1;
+    if (scale !== this.renderScale) {
+      this.renderScale = scale;
+      const size = r.getSize(new THREE.Vector2());
+      this.resize(size.x, size.y);
+    }
   }
 
   updateQuality(dt) {
@@ -206,16 +226,16 @@ export class Atmosphere {
 
   // Effective FogExp2-equivalent density for a horizontal view at eye height.
   get fogDensity() {
-    return this.game.scene.fog.density * (this.fogFloor + (1 - this.fogFloor) * Math.exp(-this.fogHeightFalloff * EYE));
+    return this.fog.density * (this.fogFloor + (1 - this.fogFloor) * Math.exp(-this.fogHeightFalloff * EYE));
   }
 
   set fogDensity(v) {
-    this.game.scene.fog.density = v / (this.fogFloor + (1 - this.fogFloor) * Math.exp(-this.fogHeightFalloff * EYE));
+    this.fog.density = v / (this.fogFloor + (1 - this.fogFloor) * Math.exp(-this.fogHeightFalloff * EYE));
   }
 
   // Fog factor (0 clear .. 1 fully fogged) between two world points, matching the shaders.
   fogFactor(from, to) {
-    return fogFactorBetween(this.game.scene.fog.density, this.fogHeightFalloff, this.fogFloor, from, to);
+    return fogFactorBetween(this.fog.density, this.fogHeightFalloff, this.fogFloor, from, to);
   }
 
   update(dt) {
@@ -224,6 +244,12 @@ export class Atmosphere {
     this.updateQuality(dt);
     const t = this.time;
     const game = this.game;
+    // The atmosphere owns scene.fog (fogColor is its colour, shared with the sky). If another module
+    // swapped in its own fog, keep that density but put ours back so sky and fog stay matched.
+    if (game.scene.fog !== this.fog) {
+      if (game.scene.fog?.isFogExp2) this.fog.density = game.scene.fog.density;
+      game.scene.fog = this.fog;
+    }
 
     // --- threat (director wins if it reports more) + heartbeat
     const dirThreat = game.director?.threat;
@@ -298,6 +324,9 @@ export class Atmosphere {
     gu.uBeat.value = this.beat;
     gu.uDeath.value = this.death;
     gu.uCall.value = this.call;
+    // Optional player brightness setting (not in the contract yet): 1 = as graded, >1 lifts shadows.
+    const brightness = game.settings?.brightness;
+    gu.uGamma.value = 1 / (typeof brightness === 'number' && brightness > 0 ? clamp(brightness, 0.5, 2) : 1);
   }
 
   writeFogUniforms(call) {
@@ -321,7 +350,7 @@ export class Atmosphere {
 
   resize(w, h) {
     const r = this.game.renderer;
-    this.composer.setPixelRatio(r.getPixelRatio());
+    this.composer.setPixelRatio(r.getPixelRatio() * this.renderScale);
     this.composer.setSize(w, h);
     r.getDrawingBufferSize(this.drawingBuffer);
     this.post.grade.uniforms.uRes.value.copy(this.drawingBuffer);
@@ -334,7 +363,8 @@ export class Atmosphere {
     renderer.getDrawingBufferSize(this.drawingBuffer);
     this.post.grade.uniforms.uRes.value.copy(this.drawingBuffer);
     this.sky.follow(camera);
-    this.particles.prepare(camera, this.drawingBuffer.y);
+    // point sprites are sized for the target they are drawn into (smaller than the canvas at quality 0)
+    this.particles.prepare(camera, this.post.scenePass.target.height || this.drawingBuffer.y);
     this.composer.render(this.lastDt);
   }
 

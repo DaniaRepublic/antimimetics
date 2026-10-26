@@ -20,6 +20,7 @@ export const GradeShader = {
     uCall: { value: 0 },
     uGrain: { value: 0.045 },
     uAberration: { value: 0.0016 },
+    uGamma: { value: 1 }, // display gamma from the optional brightness setting (1 = as graded)
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -38,6 +39,7 @@ export const GradeShader = {
     uniform float uCall;
     uniform float uGrain;
     uniform float uAberration;
+    uniform float uGamma;
     varying vec2 vUv;
 
     float hash12( vec2 p ) {
@@ -82,10 +84,12 @@ export const GradeShader = {
       col = mix( col, col * col * ( 3.0 - 2.0 * col ), 0.3 );
       float l2 = dot( col, vec3( 0.2126, 0.7152, 0.0722 ) );
       col = mix( vec3( l2 ), col, 0.88 + 0.12 * smoothstep( 0.0, 0.2, col.r - max( col.g, col.b ) ) );
+      col = pow( max( col, 0.0 ), vec3( uGamma ) );
 
-      // --- vignette, tightening with threat and death
-      float inner = 0.34 - 0.17 * uThreat - 0.25 * uDeath;
-      float outer = 1.08 - 0.34 * uThreat - 0.45 * uDeath;
+      // --- vignette, tightening with threat and death. At rest the screen sides stay at ~55% so
+      // a snatcher in the periphery is still readable; under threat it closes to a tunnel.
+      float inner = 0.42 - 0.2 * uThreat - 0.25 * uDeath;
+      float outer = 1.3 - 0.5 * uThreat - 0.55 * uDeath;
       float vig = smoothstep( outer, inner, r );
       // darken green/blue faster than red so dimmed oranges fall to maroon, not olive
       col *= mix( vec3( 0.2, 0.11, 0.1 ), vec3( 1.0 ), vig );
@@ -99,7 +103,8 @@ export const GradeShader = {
       // --- grain (triangular, luminance weighted; also dithers the dark gradients)
       vec2 gp = gl_FragCoord.xy + fract( uTime * 13.17 ) * vec2( 431.0, 197.0 );
       float g = hash12( gp ) + hash12( gp + 71.3 ) - 1.0;
-      col += g * uGrain * ( 0.45 + 0.55 * ( 1.0 - l ) ) * ( 1.0 + 0.6 * uDeath );
+      // (heavier while dying, gone once the screen has faded to black)
+      col += g * uGrain * ( 0.45 + 0.55 * ( 1.0 - l ) ) * ( 1.0 + 0.6 * uDeath ) * ( 1.0 - smoothstep( 0.8, 1.0, uDeath ) );
 
       gl_FragColor = vec4( max( col, 0.0 ), 1.0 );
     }

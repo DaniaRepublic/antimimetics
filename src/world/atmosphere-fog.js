@@ -110,7 +110,10 @@ const FRAGMENT = /* glsl */ `
 let installed = false;
 
 // Patch the fog chunks and register the shared uniforms. Must run before the first material
-// compiles (the Atmosphere constructor calls it); idempotent.
+// compiles; idempotent. It runs when this module is first imported (game.js imports the
+// atmosphere before the level, leviathan and AI modules, so a module-level
+// `UniformsUtils.merge([UniformsLib.fog, ...])` there already picks up the extra uniforms) and
+// again, as a no-op, from the Atmosphere constructor.
 export function installAtmosphereFog() {
   if (installed) return;
   installed = true;
@@ -124,6 +127,8 @@ export function installAtmosphereFog() {
   }
   Object.assign(THREE.UniformsLib.fog, FOG_UNIFORMS);
 }
+
+installAtmosphereFog();
 
 // CPU mirror of the shader's fog factor (for tests and for modules that want to fade things
 // consistently). `from`/`to` are world positions.
