@@ -127,9 +127,21 @@ export const FACE_VARIANTS = [
   },
 ];
 
+// Any seed -> non-negative integer. Numbers are floored; other values (e.g. spawn ids such as
+// 'z1-patrol') are hashed (FNV-1a) so distinct ids still get distinct faces and heights.
+export function seedToInt(seed) {
+  const n = typeof seed === 'number' ? seed : typeof seed === 'string' && seed.trim() !== '' ? Number(seed) : NaN;
+  if (Number.isFinite(n)) return Math.abs(Math.floor(n)) % 2147483647;
+  if (seed === undefined || seed === null) return 0;
+  const s = String(seed);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return (h >>> 0) % 2147483647;
+}
+
 // Sequential seeds cycle through every face.
 export function variantForSeed(seed) {
-  return Math.abs(Math.floor(Number(seed) || 0)) % FACE_VARIANTS.length;
+  return seedToInt(seed) % FACE_VARIANTS.length;
 }
 
 // Rotates face coordinates by the variant's feature rotation (features slid round the face).

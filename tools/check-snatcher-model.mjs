@@ -137,6 +137,92 @@ for (const r of look) {
   check(Math.abs(r.gotPitch - r.pitch) < tol + 0.06, `${r.mode}: headPitch ${r.pitch} -> face pitch ${r.gotPitch}`);
 }
 
+// --- robustness: what an AI built against the contract may plausibly pass.
+const robust = await h.eval(() => {
+  const g = window.__game;
+  const V = g.camera.position.constructor;
+  const bone = (m, n) => m.mesh.skeleton.bones.find((b) => b.name === n);
+  const res = {};
+  // Garbage inputs must never throw or poison the skeleton with NaN.
+  g.setup([{ seed: 4, mode: 'idle', x: 0, z: 0 }]);
+  const m = g.models[0].model;
+  const junk = [
+    [NaN, { speed: NaN, mode: undefined, headYaw: Infinity, headPitch: -Infinity, alert: 'x' }],
+    [-1, { speed: -3, mode: 'constructor', headYaw: 40, headPitch: 9 }],
+    [10, { speed: 1e9, mode: 'toString', alert: 7 }],
+    [1 / 60, null],
+    [1 / 60, undefined],
+    [0, { mode: 'chase', speed: 3.9 }],
+  ];
+  let threw = null;
+  let finite = true;
+  const bonesFinite = () => m.mesh.skeleton.bones.every((b) => [...b.position.toArray(), ...b.quaternion.toArray()].every(Number.isFinite));
+  try {
+    for (let i = 0; i < 30; i++) {
+      for (const [dt, a] of junk) {
+        m.update(dt, a);
+        finite = finite && bonesFinite();
+      }
+    }
+  } catch (e) {
+    threw = String(e);
+  }
+  g.scene.updateMatrixWorld(true);
+  res.threw = threw;
+  res.finite = finite && m.mesh.skeleton.bones.every((b) => b.matrixWorld.elements.every(Number.isFinite));
+  // First placement within a few metres of the world origin must not drag the cape over the head.
+  g.setup([{ seed: 1, mode: 'idle', x: 0, z: 0 }]);
+  const s = g.models[0].model;
+  s.root.position.set(2.5, 0, -1);
+  s.root.rotation.y = Math.PI;
+  let hem = 0;
+  for (let i = 0; i < 30; i++) {
+    s.update(1 / 60, { mode: 'idle', speed: 0 });
+    g.scene.updateMatrixWorld(true);
+    for (let k = 28; k < 35; k++) hem = Math.max(hem, bone(s, `cape${k}`).getWorldPosition(new V()).y);
+  }
+  res.spawnHemMaxY = +hem.toFixed(3);
+  // A respawn 2 m back after a chase snaps the pose and the cape.
+  g.setup([{ seed: 3, mode: 'chase', x: 0, z: 0, yaw: 0 }]);
+  const c = g.models[0].model;
+  let z = 0;
+  for (let i = 0; i < 120; i++) {
+    z -= 3.9 / 60;
+    c.root.position.set(0, 0, z);
+    c.update(1 / 60, { mode: 'chase', speed: 3.9 });
+  }
+  c.root.position.set(0, 0, z + 2);
+  c.update(1 / 60, { mode: 'idle', speed: 0 });
+  g.scene.updateMatrixWorld(true);
+  hem = 0;
+  for (let k = 28; k < 35; k++) hem = Math.max(hem, bone(c, `cape${k}`).getWorldPosition(new V()).y);
+  res.respawnHemMaxY = +hem.toFixed(3);
+  res.respawnArmX = +bone(c, 'armL').rotation.x.toFixed(3);
+  // Spawn ids as seeds: distinct ids should spread over the faces.
+  g.setup(['z1-patrol', 'z1-sentry', 'z2-a', 'z2-b', 'z2-c', 'z3-d'].map((seed, i) => ({ seed, mode: 'idle', x: i, z: -3 })));
+  res.idVariants = new Set(g.models.map((x) => x.model.variant)).size;
+  // AI state names ('patrol', 'return') pose like walking when moving, standing when not.
+  const pose = (mode, speed) => {
+    g.setup([{ seed: 1, mode: 'idle', x: 0, z: 0, yaw: 0 }]);
+    const mm = g.models[0].model;
+    let zz = 0;
+    for (let i = 0; i < 120; i++) {
+      zz -= speed / 60;
+      mm.root.position.set(0, 0, zz);
+      mm.update(1 / 60, { mode, speed });
+    }
+    return bone(mm, 'spine').rotation.x;
+  };
+  res.aliasErr = +Math.max(Math.abs(pose('patrol', 1.25) - pose('walk', 1.25)), Math.abs(pose('return', 1.25) - pose('walk', 1.25)), Math.abs(pose('patrol', 0) - pose('idle', 0))).toFixed(4);
+  return res;
+});
+console.log(JSON.stringify(robust));
+check(!robust.threw && robust.finite, `junk anim input/dt: no throw (${robust.threw}), finite skeleton (${robust.finite})`);
+check(robust.spawnHemMaxY < 0.4, `first placement near the origin: cape hem stays low (max ${robust.spawnHemMaxY} m)`);
+check(robust.respawnHemMaxY < 0.4 && Math.abs(robust.respawnArmX - 0.36) < 0.12, `respawn jump snaps cape (hem ${robust.respawnHemMaxY} m) and pose (arm ${robust.respawnArmX})`);
+check(robust.idVariants >= 3, `string seeds spread over ${robust.idVariants} face variants`);
+check(robust.aliasErr < 0.01, `AI states 'patrol'/'return' pose as walk/idle (err ${robust.aliasErr})`);
+
 // --- death cam: grab pose brings the face close to a standing player's eye.
 const grab = await h.eval(() => {
   const g = window.__game;

@@ -5,10 +5,14 @@
 //   model.update(dt, { speed, mode, headYaw, headPitch, alert, time });
 //   model.headAnchor.getWorldPosition(v);  // the face, for the death-cam look-at
 //
-// Every anim field is optional. headYaw/headPitch are relative to the body's facing and level
-// (not to the hunched neck). `time` is accepted but the model keeps its own clock (so paused
-// snatchers don't twitch in sync). In 'grab' the snatcher lunges ~0.6 m forward and brings its
-// face down to ~1.6 m: at 1.0-1.15 m from the player's eye the face ends 0.35-0.5 m away.
+// Every anim field is optional; non-finite numbers count as 0. headYaw/headPitch are relative to
+// the body's facing and level (not to the hunched neck); headYaw is wrapped to [-PI, PI]. `time`
+// is accepted but the model keeps its own clock (so paused snatchers don't twitch in sync). The
+// AI states 'patrol'/'return' (and unknown modes) pose as 'walk' when moving, 'idle' when not.
+// In 'grab' the snatcher lunges ~0.6 m forward and brings its face down to ~1.6 m: at
+// 1.0-1.15 m from the player's eye the face ends 0.35-0.5 m away.
+// The seed may be any number or string (spawn ids are hashed). A root jump of more than ~0.9 m
+// between updates (spawn, respawn, reset) is a teleport: pose and cape snap instead of dragging.
 //
 // One SkinnedMesh per snatcher (2 draw calls: skin + cloth), geometry and materials shared per face
 // variant. Everything inside root is animated here: a gait whose stride phase advances with
@@ -17,7 +21,7 @@
 // overlays (twitches, jerks, tremor, sliding facial features), and a simulated cape.
 import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, noise1, makeRng, angleDiff } from '../core/math.js';
-import { variantForSeed } from './snatcher-head.js';
+import { seedToInt, variantForSeed } from './snatcher-head.js';
 import { BONE, BONE_REST, CAPE_FIRST, CAPE_REST, LEG, createSkeleton, getSnatcherAssets } from './snatcher-rig.js';
 import { CAPE, CapeSim } from './snatcher-cape.js';
 
@@ -74,6 +78,25 @@ export const SNATCHER_MODES = {
 const MODES = SNATCHER_MODES;
 const KEYS = Object.keys(BASE);
 for (const m of Object.values(MODES)) for (const k of KEYS) if (m[k] === undefined) m[k] = BASE[k];
+
+// AI state names that are not visual modes (ARCHITECTURE.md lists 'patrol' and 'return' as AI
+// states) and any unknown mode fall back to walking or standing, by speed.
+const MOVING_STATES = new Set(['patrol', 'return', 'wander', 'move']);
+function resolveMode(mode, speed) {
+  if (typeof mode === 'string' && Object.prototype.hasOwnProperty.call(MODES, mode)) return mode;
+  if (MOVING_STATES.has(mode)) return speed > 0.15 ? 'walk' : 'idle';
+  return speed > 0.3 ? 'walk' : 'idle';
+}
+
+// Numeric anim fields: anything that is not a finite number counts as 0.
+const finite = (x) => {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// A root jump larger than this between two updates is a teleport (spawn, respawn, reset): the cape
+// and the pose snap instead of being dragged across the gap.
+const teleportDistance = (dt) => 0.75 + 8 * Math.min(dt, 0.25);
 
 const HEAD_ANCHOR = new THREE.Vector3(0, 0.15, -0.1); // the face, relative to the head bone
 const CHEST_REST = BONE_REST[BONE.chest];
@@ -184,21 +207,25 @@ class SnatcherAnimator {
     bones[BONE.armR].rotation.order = 'XZY';
   }
 
-  update(dt, anim = {}) {
-    dt = clamp(Number.isFinite(dt) ? dt : 0, 0, 0.1);
-    const mode = MODES[anim.mode] ? anim.mode : 'idle';
+  update(dtIn, anim = {}) {
+    // rawDt measures root motion (an AI may update distant snatchers at a lower rate); the
+    // animation itself never steps more than 0.1 s at once.
+    const rawDt = Number.isFinite(dtIn) && dtIn > 0 ? dtIn : 0;
+    const dt = Math.min(rawDt, 0.1);
+    const speedIn = clamp(finite(anim.speed), 0, 12);
+    const mode = resolveMode(anim.mode, speedIn);
     if (mode !== this.mode) {
       this.mode = mode;
       this.modeTime = 0;
     }
     this.modeTime += dt;
     this.t += dt;
-    const speedIn = Math.max(0, Number(anim.speed) || 0);
-    const headYaw = Number(anim.headYaw) || 0;
-    const headPitch = Number(anim.headPitch) || 0;
-    const alert = clamp(Number(anim.alert) || 0, 0, 1);
+    const headYaw = angleDiff(0, finite(anim.headYaw)); // wrapped: AIs often pass raw angle differences
+    const headPitch = clamp(finite(anim.headPitch), -1.5, 1.5);
+    const alert = clamp(finite(anim.alert), 0, 1);
 
-    const teleported = this.trackRoot(dt);
+    const teleported = this.trackRoot(rawDt);
+    if (teleported) this.snap(mode, speedIn);
     this.blend(dt, mode);
     this.overlays(dt);
     const P = this.p;
@@ -329,7 +356,7 @@ class SnatcherAnimator {
     const x = e[12], z = e[14];
     const yaw = Math.atan2(e[8], e[10]);
     let teleported = false;
-    if (!this.hasPrev || Math.hypot(x - this.prevX, z - this.prevZ) > 3) {
+    if (!this.hasPrev || Math.hypot(x - this.prevX, z - this.prevZ) > teleportDistance(dt)) {
       teleported = true;
       this.hasPrev = true;
       this.vx = this.vz = this.accF = this.accL = this.yawRate = 0;
@@ -349,6 +376,18 @@ class SnatcherAnimator {
     this.prevYaw = yaw;
     this.yaw = yaw;
     return teleported;
+  }
+
+  // After a teleport: take the current mode's pose at once and drop all motion state.
+  snap(mode, speed) {
+    const target = MODES[mode];
+    for (const key of KEYS) this.p[key] = target[key];
+    this.speed = speed;
+    this.lift = smoothstep(0.03, 0.2, speed) * smoothstep(0, 0.8, speed);
+    for (const pd of this.pend) pd.f = pd.fv = pd.o = pd.ov = 0;
+    for (const k of TW_KEYS) this.tw[k] = 0;
+    for (const k of JK_KEYS) this.jk[k] = 0;
+    this.twHold = 0;
   }
 
   blend(dt, mode) {
@@ -496,9 +535,10 @@ class SnatcherAnimator {
 
 // Creates one snatcher. The seed picks the face variant and individual quirks (height, timing).
 export function createSnatcherModel(seed = 1) {
-  const variantIndex = variantForSeed(seed);
+  const seedInt = seedToInt(seed);
+  const variantIndex = variantForSeed(seedInt);
   const assets = getSnatcherAssets(variantIndex);
-  const rng = makeRng((seed | 0) * 2654435761);
+  const rng = makeRng(seedInt * 2654435761);
   const root = new THREE.Object3D();
   root.name = 'snatcher';
   const rig = new THREE.Group();
@@ -519,9 +559,12 @@ export function createSnatcherModel(seed = 1) {
   bones[BONE.head].add(headAnchor);
 
   // Timing quirks also mix in the instance number, so two snatchers sharing a seed never move in step.
-  const animSeed = (Math.abs(Math.floor(Number(seed) || 0)) % 9973) + 1 + (instanceCount++ % 97) * 131;
+  const animSeed = (seedInt % 9973) + 1 + (instanceCount++ % 97) * 131;
   const animator = new SnatcherAnimator(rig, bones, animSeed);
   animator.update(0, { mode: 'idle' });
+  // The AI has not placed the model yet: its first real update is a teleport, wherever that is
+  // (otherwise a spawn within a few metres of the origin drags the cape across the gap).
+  animator.hasPrev = false;
 
   return {
     root,
