@@ -579,10 +579,11 @@ function findSceneCamera(obj) {
   let top = obj;
   while (top.parent) top = top.parent;
   if (!top.isScene) return null;
+  // (only consulted while grabbing, so a miss is simply searched again next time)
   let cam = sceneCameras.get(top);
-  if (cam === undefined || (cam && cam.parent !== top)) {
+  if (!cam || cam.parent !== top) {
     cam = top.children.find((c) => c.isPerspectiveCamera) || null;
-    sceneCameras.set(top, cam);
+    if (cam) sceneCameras.set(top, cam);
   }
   return cam;
 }
@@ -605,7 +606,8 @@ function keepGrabDistance(root, rig, animator, dt) {
       }
     }
   }
-  const k = 1 - Math.exp(-(animator.mode === 'grab' ? 14 : 4) * Math.min(Math.max(dt, 0), 0.1));
+  const step = Number.isFinite(dt) && dt > 0 ? Math.min(dt, 0.1) : 0;
+  const k = 1 - Math.exp(-(animator.mode === 'grab' ? 14 : 4) * step);
   rig.position.x += (_grabPush.x - rig.position.x) * k;
   rig.position.z += (_grabPush.z - rig.position.z) * k;
 }
