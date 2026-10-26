@@ -202,6 +202,12 @@ export function installPolicies() {
   P[3].escape = escape([[2, -232], [0, -250], [0, -270]]);
   P[4].escape = escape([[-6, -360], [-2, -380]]);
 
+  // Bold but quiet: crouch-walk up the east aisle, right behind the sleeper's back (~1.5 m).
+  P[4]['garage-tiptoe'] = (B) => {
+    B.setStanceNow('crouch');
+    B.moveTo(-15.2, -343, { stance: 'crouch' });
+    B.path([[-17, -360], [-16.8, -380], [-16.9, -396], [-17.2, -415], [-12.4, -420.8], [-6, -425], [-2.5, -433]], { stance: 'crouch' });
+  };
   // Careless in the garage: walk upright straight up the east aisle, right past the sleeper.
   P[4]['garage-walk'] = (B) => {
     B.moveTo(-15.2, -343, { stance: 'walk' });

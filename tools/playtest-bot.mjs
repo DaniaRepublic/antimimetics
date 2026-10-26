@@ -225,21 +225,29 @@ export function installBot([CFG, { fastModels = true } = {}]) {
     const V = window.__THREE_V;
     const eye = new V(), pt = new V();
     let best = null;
-    for (let k = 0; k < 160; k++) {
-      const a = (k / 160) * Math.PI * 2 * 7.3;
-      const r = 10 + (k % 10) * 2;
+    // Where each of them will start looking: where it last saw us, a little along our way.
+    const searchFrom = hunters.map((s) => {
+      const b = s.brain;
+      return { x: b.lastSeenPos.x + b.lastSeenVel.x * 1.6, z: b.lastSeenPos.z + b.lastSeenVel.z * 1.6 };
+    });
+    for (let k = 0; k < 200; k++) {
+      const a = (k / 200) * Math.PI * 2 * 7.3;
+      const r = 12 + (k % 12) * 2;
       const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
       if (!g.nav.isWalkable(x, z) || !g.nav.sameRegion(p.x, p.z, x, z)) continue;
       let score = 0, ok = true;
-      for (const s of hunters) {
+      hunters.forEach((s, i) => {
         const dx = x - s.position.x, dz = z - s.position.z;
         const away = ((x - p.x) * (p.x - s.position.x) + (z - p.z) * (p.z - s.position.z)) / (r * (Math.hypot(p.x - s.position.x, p.z - s.position.z) || 1));
         if (away < 0.2) ok = false;
         s.getEyePos(eye);
         pt.set(x, 0.7, z);
         if (!g.world.segmentBlocked(eye, pt)) score -= 3;
+        const sf = searchFrom[i];
+        const ds = Math.hypot(x - sf.x, z - sf.z);
+        if (ds < 11) score -= (11 - ds) * 0.4; // inside its search circle
         score += Math.min(Math.hypot(dx, dz), 30) * 0.1 + away;
-      }
+      });
       // something tall right next to it to crouch behind
       const cover = g.world.query(x - 1.2, z - 1.2, x + 1.2, z + 1.2).some((c) => c.enabled && c.blocksSight && c.maxY >= 1.0 && c.minY < 0.5);
       if (cover) score += 1.5;
@@ -502,8 +510,9 @@ export function installBot([CFG, { fastModels = true } = {}]) {
     try {
       if (ctx.offset > 0) B.wait(ctx.offset);
       pol(B, ctx);
-      // Policy returned without reaching the goal: keep standing for a moment (goal may fire).
-      B.wait(1);
+      // Policy returned without reaching the goal: keep still for a while (a checkpoint is only
+      // banked once nobody is chasing; whoever is will catch up or give up).
+      B.waitUntil(() => r.success, opts.endWait ?? 15);
       r.outcome = r.success ? 'goal' : 'gave-up';
     } catch (e) {
       if (e === CAUGHT) r.outcome = 'caught';
