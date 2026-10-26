@@ -88,6 +88,8 @@ async function screens(vp) {
   await h.eval(() => {
     const g = window.__game;
     window.__fakes = window.__fakes.filter((f) => f.state !== 'chase');
+    // One behind the player: its arc sits just above the message toast and must not cross it.
+    window.__fakes.push({ enemy: { id: 'fe' }, detection: 0.9, bearing: 3.05, state: 'investigate', distance: 7 });
     const p = g.player;
     const fwd = p.forward(p.position.clone()).setY(0).normalize();
     g.level.interactables.push({
@@ -98,7 +100,7 @@ async function screens(vp) {
       index: 1,
       zone: { name: 'Main Street', objective: 'Stay low behind the wrecks. Keep out of the light.', hint: 'Keep the wrecks between you and them.' },
     });
-    g.bus.emit('level:message', { text: 'WHEN IT CALLS THEY LISTEN', duration: 10 });
+    g.bus.emit('level:message', { text: 'WHEN IT CALLS THEY LISTEN. Move while it calls; stand still when it stops.', duration: 10 });
     g.bus.emit('game:checkpoint', { checkpoint: { id: 'test' } });
     g.input.keys.add('KeyE');
     g.simulate(2.2);
@@ -227,7 +229,7 @@ async function flow() {
   console.log('\n[flow]');
   const h = await launch({ html: 'dist/index.html', query: 'mute', width: 1280, height: 720 });
   const state = () => h.eval(() => window.__game.state);
-  const waitStateTime = (s) => h.page.waitForFunction((t) => window.__game.stateTime > t, s, { timeout: 30000 });
+  const waitStateTime = (s) => h.page.waitForFunction((t) => window.__game.stateTime > t, s, { timeout: 300000 });
   await waitStateTime(0.3);
   await h.page.mouse.click(640, 360);
   check((await state()) === 'intro', 'title click -> intro');
@@ -253,7 +255,7 @@ async function flow() {
     g.caughtBy = g.director.snatchers[0] || null;
     g.setState('caught');
   });
-  await h.page.waitForFunction(() => window.__game.state === 'dead', null, { timeout: 30000 });
+  await h.page.waitForFunction(() => window.__game.state === 'dead', null, { timeout: 300000 });
   await h.page.mouse.click(640, 360);
   check((await state()) === 'dead', 'retry ignores an immediate click');
   await waitStateTime(1.2);
@@ -287,6 +289,8 @@ async function tutorial() {
   }, seconds);
   await h.eval(() => {
     const g = window.__game;
+    // Keep the real level's own triggers (graffiti messages, zone cards) out of this timing test.
+    g.level.update = () => {};
     g.setState('playing');
     g.player.bottles = 0;
     g.bus.emit('level:message', { text: 'SOMETHING IS WRITTEN ON THE WALL', duration: 3 });

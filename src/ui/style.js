@@ -149,9 +149,10 @@ const CSS = `
   font-size: clamp(13px, 1.45vw, 16px); font-style: italic; letter-spacing: 0.04em;
 }
 
-/* level messages (graffiti, hints) */
+/* level messages (graffiti, hints): low enough to clear the detection ring's lower arcs (a
+   chaser behind you), wide enough that a long graffiti line takes two lines, not three */
 .wic-msg {
-  position: absolute; left: 50%; bottom: 25vh; width: min(88vw, 38em);
+  position: absolute; left: 50%; bottom: max(21vh, 140px); width: min(88vw, 760px);
   transform: translateX(-50%); text-align: center; opacity: 0;
 }
 .wic-msg::before {
@@ -159,7 +160,7 @@ const CSS = `
   background: radial-gradient(ellipse at center, rgba(var(--wic-night-rgb), 0.62) 0%, rgba(var(--wic-night-rgb), 0) 70%);
 }
 .wic-msg__text {
-  font-size: clamp(14px, 1.65vw, 19px); line-height: 1.6; letter-spacing: 0.07em; color: var(--wic-ink);
+  font-size: clamp(14px, 1.55vw, 18px); line-height: 1.6; letter-spacing: 0.07em; color: var(--wic-ink);
   text-shadow: 0 0 2px #000, 0 0 16px rgba(0, 0, 0, 0.95);
 }
 
