@@ -11,7 +11,7 @@
 //   B.path([[x, z], ...], opts)     B.wait(s)     B.waitUntil(fn, timeout)     B.stance(s)
 //   B.throwAt({x, y, z, collider})  B.pickup(x, z, opts)   B.cutChain(opts)
 //   B.det() max detection   B.calling()   B.callLeft()   B.s(id) snatcher by id
-export function installBot(CFG) {
+export function installBot([CFG, { fastModels = true } = {}]) {
   const g = window.__game;
   window.__THREE_V = g.player.position.constructor; // THREE.Vector3
   window.__PLAYER_CFG = CFG.player;
@@ -21,6 +21,11 @@ export function installBot(CFG) {
   // The page's own rAF loop must not advance the world between (or during) bot runs.
   g.tick = () => {};
   g.render = () => {};
+  // Stop the page's frame loop altogether (compositing an idle canvas still costs CPU headless).
+  window.requestAnimationFrame = () => 0;
+  // Skinned snatcher animation is ~80% of a headless tick and purely visual (the AI's eyes are
+  // computed from the body, not the rig): skip it unless a test needs the real head position.
+  if (fastModels) for (const s of g.director.snatchers) s.model.update = () => {};
   const dirToYaw = (dx, dz) => Math.atan2(-dx, -dz);
   const CAUGHT = { reason: 'caught' }, GOAL = { reason: 'goal' }, TIMEOUT = { reason: 'timeout' };
 
@@ -292,6 +297,12 @@ export function installBot(CFG) {
       const hit = g.world.raycast(pos, dir, step, { filter: (c) => c.blocksMove || c.blocksSight });
       if (hit) return { x: hit.point.x, y: hit.point.y, z: hit.point.z, collider: hit.collider };
       pos.addScaledVector(vel, DT);
+      // (mirrors Projectiles: alarm cars have a padded hit box)
+      for (const col of g.world.query(pos.x - 0.6, pos.z - 0.6, pos.x + 0.6, pos.z + 0.6)) {
+        if (!col.enabled || !col.data?.alarmCar || pos.y > col.maxY + 0.9) continue;
+        const dx = pos.x - col.cx, dz = pos.z - col.cz;
+        if (Math.abs(col.cos * dx - col.sin * dz) <= col.hx + 0.6 && Math.abs(col.sin * dx + col.cos * dz) <= col.hz + 0.6) return { x: pos.x, y: pos.y, z: pos.z, collider: col };
+      }
       if (pos.y <= 0.03) return { x: pos.x, y: 0.03, z: pos.z, collider: null };
     }
     return { x: pos.x, y: pos.y, z: pos.z, collider: null };

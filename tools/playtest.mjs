@@ -32,10 +32,14 @@ const onlyRuns = opt('--only-runs', null)?.split(',').map(Number);
 const DEFAULT_OFFSETS = [0, 7.3, 13.9, 21.4, 29.2, 3.6, 17.1, 25.5, 10.2, 33.8];
 const all = [];
 let errors = [];
-for (const zone of zones) {
+const open = async (zone) => {
   const h = await launch({ html, query: `autostart&quality=0&mute&cp=${zone}`, timeout: 120000 });
-  await h.eval(installBot, CONFIG);
+  await h.eval(installBot, [CONFIG, { fastModels: !args.includes('--full-models') }]);
   await h.eval(installPolicies);
+  return h;
+};
+for (const zone of zones) {
+  let h = await open(zone);
   const names = await h.eval((z) => Object.keys(window.__policies[z] || {}), zone);
   const traces = [];
   for (const name of names) {
@@ -43,7 +47,20 @@ for (const zone of zones) {
     for (let i = 0; i < runs; i++) {
       if (onlyRuns && !onlyRuns.includes(i)) continue;
       const offset = offsets ? offsets[i % offsets.length] : DEFAULT_OFFSETS[i % DEFAULT_OFFSETS.length];
-      const r = await h.eval(([z, n, i, o]) => window.__bot.runPolicy(z, n, i, o), [zone, name, i, { offset, trace }]);
+      let r;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          r = await h.eval(([z, n, i, o]) => window.__bot.runPolicy(z, n, i, o), [zone, name, i, { offset, trace }]);
+          break;
+        } catch (err) {
+          // A headless renderer occasionally dies under heavy machine load: reopen and retry.
+          errors = errors.concat(h.errors);
+          await h.close().catch(() => {});
+          if (attempt >= 2) throw err;
+          console.log(`  (page crashed: ${String(err.message).split('\n')[0]}; reopening)`);
+          h = await open(zone);
+        }
+      }
       all.push(r);
       const flag = r.outcome === 'goal' ? 'OK  ' : 'FAIL';
       console.log(`Z${zone} ${name.padEnd(12)} #${i} off ${String(offset).padStart(4)}s  ${flag} ${r.outcome.padEnd(8)} t=${String(r.time).padStart(6)}s  alerts=${r.alerts} susp=${r.suspicious} maxThreat=${r.maxThreat} chase=${r.chaseTime}s${r.footBlocks ? ' footBlocks=' + r.footBlocks : ''}${r.caughtBy ? ' by ' + r.caughtBy : ''} end=${r.pos}`);

@@ -266,6 +266,21 @@ export class Snatcher {
     this.faceYaw = yaw;
   }
 
+  // Kill all momentum this instant (halt() only stops steering; speed would ease down).
+  stopDead() {
+    this.speed = 0;
+    this.dirX = 0;
+    this.dirZ = 0;
+    this.velocity.set(0, 0, 0);
+  }
+
+  // Small direct reposition (grab spacing), still kept out of walls.
+  nudge(dx, dz) {
+    this.position.x += dx;
+    this.position.z += dz;
+    this.game.world.resolveCircle(this.position, E.radius, { height: 2.1 });
+  }
+
   lookAt(x, y, z, rate = 6) {
     this.lookMode = 1;
     this.lookX = x;

@@ -40,6 +40,7 @@ export const TUNE = {
   raptureRecover: 0.5, // s after the call ends: heads still coming down, blind and deaf
   // Devouts do nothing but watch the open ground: sharper eyes than a sentry.
   devoutPerception: 1.5,
+  grabRange: [1.0, 1.12], // metres, root to player, held through the death cam
 };
 
 // Piecewise-linear lookup in a sorted [[x, y], ...] table.
@@ -759,13 +760,26 @@ export class Brain {
   enterGrab() {
     this.setState('grab');
     this.body.halt();
+    // Plant the feet at once: the model's own lunge closes the last ~0.6 m, so any momentum
+    // carried into the grab would push its face through the camera.
+    this.body.stopDead();
   }
 
-  updateGrab() {
+  updateGrab(dt) {
     const b = this.body;
     const p = this.game.player;
-    b.face(dirToYaw(p.position.x - b.position.x, p.position.z - b.position.z));
+    const dx = p.position.x - b.position.x, dz = p.position.z - b.position.z;
+    const d = Math.hypot(dx, dz);
+    b.face(dirToYaw(dx, dz));
     b.lookAt(p.position.x, p.position.y + p.eyeHeight, p.position.z, 12);
+    // Hold the root TUNE.grabRange from the player (the player still slides a little as their
+    // momentum dies): ease back if too close, follow if they drift away.
+    const [near, far] = TUNE.grabRange;
+    if (d > 1e-3 && (d < near || d > far)) {
+      const want = d < near ? near : far;
+      const step = clamp(d - want, -1.5 * dt, 1.5 * dt);
+      b.nudge((dx / d) * step, (dz / d) * step);
+    }
   }
 
   // God mode: it reaches you and simply stops caring for a while.

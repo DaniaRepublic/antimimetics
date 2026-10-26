@@ -116,4 +116,52 @@ export function installPolicies() {
   P[2].sprint = (B) => {
     B.path([[2, -207], [2, -215]], { stance: 'sprint' });
   };
+
+  // ============================================================================================
+  // Z4 -- the highway approach. A patrol paces the floodlit ramp in front of the chained gate
+  // (z -395); the parking structure to the west (x -44..-13) is the quiet way round, with a
+  // sleeper slumped in its east aisle (x -18.4, z -388) facing the street.
+  const Z4_RUN = [[0, -399], [-1.5, -412], [-2.5, -433]];
+  // (a) The gate: pull the patrol away with a bottle, cut the chain while it looks, then run.
+  P[4].gate = (B) => {
+    const pat = B.s('z4_patrol');
+    B.setStanceNow('crouch');
+    B.pickup(-10.2, -349.8);
+    // Cover: the car queue, then the west overpass pier (the patrol's loop is 9-24 m north of it).
+    B.sneak([[-8.6, -356.5], [-6.6, -365.5]]);
+    // Throw once the patrol is on the east half of its loop, near enough to hear the shatter.
+    const T = { x: 10.2, y: 0.2, z: -363.5 };
+    B.waitUntil(() => pat.state === 'patrol' && Math.hypot(pat.position.x - T.x, pat.position.z - T.z) < 17.5 && pat.position.x > 0, 90);
+    B.throwAt(T, { maxMiss: 2 });
+    B.waitUntil(() => pat.state === 'investigate' || pat.state === 'suspicious', 4);
+    // Wait until it is walking away east, then go up the dark west lane to the gate.
+    B.waitUntil(() => pat.state === 'investigate' && pat.position.x > 3, 12);
+    B.path([[-9.2, -373], [-8.4, -386.5], [-2.2, -392.8]], { stance: 'walk' });
+    B.cutChain({ stance: 'walk' });
+    B.path(Z4_RUN, { stance: 'sprint' });
+  };
+  // (b) The quiet way: through the parking structure's middle aisle, well behind the sleeper.
+  P[4].garage = (B) => {
+    B.setStanceNow('crouch');
+    B.moveTo(-15.2, -343, { stance: 'crouch' });
+    B.path([[-27.6, -349], [-28.1, -372]], { stance: 'walk' });
+    B.path([[-28.1, -404]], { stance: 'crouch' });
+    B.path([[-28.1, -419], [-17, -421], [-12.4, -420.8], [-6, -425], [-2.5, -433]], { stance: 'walk' });
+  };
+  // Careless: walk straight up the road to the gate, cut the chain in the floodlight, walk on.
+  P[4].careless = (B) => {
+    B.path([[-6, -360], [-1.5, -390]], { stance: 'walk' });
+    B.cutChain({ stance: 'walk' });
+    B.path(Z4_RUN, { stance: 'walk' });
+  };
+  P[4].sprint = (B) => {
+    B.path([[-6, -360], [-1.5, -390]], { stance: 'sprint' });
+    B.cutChain({ stance: 'walk' });
+    B.path(Z4_RUN, { stance: 'sprint' });
+  };
+  // Careless in the garage: walk upright straight up the east aisle, right past the sleeper.
+  P[4]['garage-walk'] = (B) => {
+    B.moveTo(-15.2, -343, { stance: 'walk' });
+    B.path([[-17, -360], [-17.2, -415], [-12.4, -420.8], [-6, -425], [-2.5, -433]], { stance: 'walk' });
+  };
 }

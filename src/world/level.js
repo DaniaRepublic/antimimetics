@@ -10,6 +10,7 @@ import { cylX } from './props.js';
 
 const ALARM_DURATION = 14;
 const ALARM_REARM = 6; // seconds after an alarm stops before the car can be set off again
+const ALARM_NEAR = 2.0; // a bottle smashing this close to the car (footprint, metres) sets it off
 const GATE_SWING = 1.75; // radians the gate leaves swing open
 const _v = new THREE.Vector3();
 const _w = new THREE.Vector3();
@@ -306,7 +307,7 @@ export class Level {
   onShatter({ pos, collider }) {
     for (const a of this.alarms) {
       if (!a.armed || a.active) continue;
-      const hit = collider?.data?.alarmCar === a.id || (pos && Level.distToCollider(pos, a.collider) <= 1.5);
+      const hit = collider?.data?.alarmCar === a.id || (pos && pos.y < a.collider.maxY + 1 && Level.distToCollider(pos, a.collider) <= ALARM_NEAR);
       if (hit) this.startAlarm(a);
     }
   }
