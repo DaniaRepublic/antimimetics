@@ -174,7 +174,39 @@ export function car(B, o) {
   // Chassis shadow under the body.
   b.box('rough', sub(M, 0, 0.12, 0), W - 0.25, T.body - 0.1, L - 0.7, COL.black, { ao: 0 });
   b.geom(bodyKey, profileGeo(`car-${type}-lower`, T.lower, W), M, paint, { ao: 0.45, aoHeight: 1.0 });
-  if (T.cargo) b.geom(bodyKey, profileGeo(`car-${type}-cargo`, T.cargo, W, 0.03), M, paint, { ao: 0.2, aoHeight: 2 });
+  if (T.cargo) {
+    b.geom(bodyKey, profileGeo(`car-${type}-cargo`, T.cargo, W, 0.03), M, paint, { ao: 0.2, aoHeight: 2 });
+    // Box-body detailing, so the big flat panels read as a van and not a crate: vertical ribs,
+    // top and bottom rails proud of the skin, a dirt band along the sill, the rear doors' seam.
+    const C0 = T.cargo, u0 = C0[0][0], u1 = C0[1][0], y0 = C0[0][1], y1 = C0[2][1];
+    const rib = shade(paint, 0.72), rail = shade(paint, 0.6), dirt = mix(paint, C(0x2a2118), 0.55);
+    for (const sx of [-1, 1]) {
+      const px = sx * (W / 2 + 0.012);
+      for (let u = u0 + 0.32; u < u1 - 0.15; u += 0.62) b.box(bodyKey, sub(M, px, y0 + 0.06, -u), 0.035, y1 - y0 - 0.16, 0.06, rib, { ao: 0.25 });
+      b.box(bodyKey, sub(M, sx * (W / 2 + 0.016), y1 - 0.12, -(u0 + u1) / 2), 0.045, 0.1, u1 - u0 - 0.04, rail, { ao: 0 });
+      b.box(bodyKey, sub(M, sx * (W / 2 + 0.016), y0 - 0.02, -(u0 + u1) / 2), 0.045, 0.12, u1 - u0 - 0.04, rail, { ao: 0 });
+      b.box('rough', sub(M, sx * (W / 2 + 0.006), T.body + 0.02, 0), 0.02, 0.32, L - 0.5, dirt, { ao: 0.6, faces: sx > 0 ? FACE.px : FACE.nx });
+    }
+    // Rear: a roll-up door (slats between two corner posts, a grab bar near the bottom), each piece
+    // laid on the body's actual rear surface at its height (the profiles lean and bulge).
+    const rearZ = (y) => {
+      let u = Infinity;
+      for (const [pts, bev] of [[T.lower, 0.04], [C0, 0.03]]) {
+        for (let i = 0; i < pts.length; i++) {
+          const [ua, ya] = pts[i], [ub, yb2] = pts[(i + 1) % pts.length];
+          if ((y - ya) * (y - yb2) > 0 || ya === yb2) continue;
+          u = Math.min(u, ua + ((ub - ua) * (y - ya)) / (yb2 - ya) - bev);
+        }
+      }
+      return -u + 0.006;
+    };
+    const yb = T.body + 0.12;
+    for (const sx of [-1, 1]) {
+      for (let y = yb; y < y1 - 0.05; y += 0.25) b.box(bodyKey, sub(M, sx * (W / 2 - 0.06), y, rearZ(y + 0.12) + 0.01), 0.1, 0.25, 0.03, rail, { ao: 0 });
+    }
+    for (let y = yb + 0.16; y < y1 - 0.08; y += 0.17) b.box(bodyKey, sub(M, 0, y, rearZ(y)), W - 0.22, 0.025, 0.02, rib, { ao: 0 });
+    b.box('metal', sub(M, 0, yb + 0.1, rearZ(yb + 0.1) + 0.02), 0.6, 0.05, 0.05, COL.darkSteel, { ao: 0 });
+  }
   if (burnt) {
     // Gutted greenhouse: dark interior, bare pillars, a sagging roof.
     b.geom('rough', profileGeo(`car-${type}-gut`, G, Wg - 0.12, 0.02), sub(M, 0, -0.04, 0), COL.black);

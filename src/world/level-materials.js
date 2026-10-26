@@ -55,6 +55,8 @@ export function createLevelMaterials(T) {
     facade_stone: facadeMaterial(T.facade.stone, 1),
     store: std({ map: T.store.map, emissiveMap: T.store.glow, emissive: 0xffffff, emissiveIntensity: 0.0, roughness: 0.75, metalness: 0.05 }),
     storeLit: std({ map: T.store.map, emissiveMap: T.store.glow, emissive: 0x8fb8a8, emissiveIntensity: 1.6, roughness: 0.6, metalness: 0.05 }),
+    // A work light left burning deep inside a gutted shop (emissive only: no stealth light).
+    storeGlow: std({ map: T.store.map, emissiveMap: T.store.glow, emissive: 0xffa24e, emissiveIntensity: 0.32, roughness: 0.75, metalness: 0.05 }),
     road: std({ map: T.road, roughness: 0.82, metalness: 0.0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }),
     asphalt: std({ map: T.asphalt, roughness: 0.88, metalness: 0.0 }),
     paving: std({ map: T.paving, roughness: 0.9 }),

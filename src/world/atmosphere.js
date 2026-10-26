@@ -23,8 +23,8 @@ const LOOK = {
   cloudLow: rgb(0.26, 0.046, 0.022),
   cloudHigh: rgb(0.085, 0.017, 0.013),
   hemiSky: rgb(1.0, 0.31, 0.19),
-  hemiGround: rgb(0.1, 0.03, 0.022),
-  hemiIntensity: 1.85,
+  hemiGround: rgb(0.16, 0.05, 0.034), // bounce off the glowing streets: car flanks and doorways are not black holes
+  hemiIntensity: 1.95,
   dirColor: rgb(1.0, 0.36, 0.16),
   dirIntensity: 0.7,
   mistLow: rgb(0.05, 0.0095, 0.0065),

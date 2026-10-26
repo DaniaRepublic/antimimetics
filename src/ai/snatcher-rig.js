@@ -411,6 +411,11 @@ function buildGeometry(variant, seed) {
 // ---------------------------------------------------------------------------------------------
 // Materials
 
+// Share of the scene fog the figures take at mid range (atmosphere-fog.js, ATMO_FOG_SILHOUETTE):
+// at 15-40 m a snatcher stays a darker shape in the mist than the street behind it, which is
+// what a player sneaking past needs to read. Past ~75 m the full fog swallows it again.
+const FOG_SILHOUETTE = '0.45';
+
 let clothMaterial = null;
 
 // Near-black cloth with a faint red sheen at grazing angles (picks up the sky glow).
@@ -425,6 +430,7 @@ function getClothMaterial() {
     side: THREE.DoubleSide,
     alphaTest: 0.5,
   });
+  m.defines = { ATMO_FOG_SILHOUETTE: FOG_SILHOUETTE };
   m.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <emissivemap_fragment>',
@@ -435,7 +441,7 @@ function getClothMaterial() {
         float rim = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
         vec3 upV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
         float skyward = clamp(dot(normal, upV) * 0.5 + 0.5, 0.0, 1.0);
-        totalEmissiveRadiance += vec3(0.085, 0.012, 0.008) * pow(rim, 2.6) * (0.3 + 0.7 * skyward);
+        totalEmissiveRadiance += vec3(0.11, 0.016, 0.01) * pow(rim, 2.6) * (0.3 + 0.7 * skyward);
       }`,
     );
   };
@@ -443,6 +449,10 @@ function getClothMaterial() {
   clothMaterial = m;
   return m;
 }
+
+// Emissive gain of the skin: paintGlow's face smear is painted dim to match, so this mostly sets
+// how hot the eye embers burn (HDR > 1: they bloom).
+const SKIN_GLOW = 2.2;
 
 function makeSkinMaterial(variant, layout, seed) {
   const map = canvasTexture(paintFace(variant, layout, seed));
@@ -453,9 +463,10 @@ function makeSkinMaterial(variant, layout, seed) {
     bumpScale: 1.2,
     emissiveMap: glow,
     emissive: 0xffffff,
-    emissiveIntensity: 1,
+    emissiveIntensity: SKIN_GLOW,
     roughness: 0.48,
     metalness: 0,
+    defines: { ATMO_FOG_SILHOUETTE: FOG_SILHOUETTE },
   });
 }
 

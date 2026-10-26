@@ -86,10 +86,13 @@ export const GradeShader = {
 
       // --- grade: maroon shadows, amber highlights, gentle S-curve, muted non-reds
       float l = dot( col, vec3( 0.2126, 0.7152, 0.0722 ) );
-      // shadows lift to a dark maroon (never crushed to pure black, so cover and shapes stay legible)
-      col += vec3( 0.034, 0.008, 0.01 ) * ( 1.0 - smoothstep( 0.0, 0.2, l ) );
+      // Toe: a laptop panel crushes everything under ~10/255, and most of this image lives there.
+      // The darks get a gain (hue kept) and a faint maroon-brown floor, so cover, the street and
+      // the figures on it stay legible; the S-curve's contrast only works from the low mids up.
+      float toe = 1.0 - smoothstep( 0.0, 0.3, l );
+      col = col * ( 1.0 + 0.38 * toe ) + vec3( 0.028, 0.011, 0.01 ) * toe * toe;
       col = mix( col, col * vec3( 1.06, 0.95, 0.84 ), smoothstep( 0.3, 0.85, l ) );
-      col = mix( col, col * col * ( 3.0 - 2.0 * col ), 0.3 );
+      col = mix( col, col * col * ( 3.0 - 2.0 * col ), 0.3 * smoothstep( 0.1, 0.4, l ) );
       float l2 = dot( col, vec3( 0.2126, 0.7152, 0.0722 ) );
       col = mix( vec3( l2 ), col, 0.88 + 0.12 * smoothstep( 0.0, 0.2, col.r - max( col.g, col.b ) ) );
       col = pow( max( col, 0.0 ), vec3( uGamma ) );

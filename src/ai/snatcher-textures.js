@@ -526,6 +526,8 @@ export function paintFace(variant, layout, seed) {
 }
 
 // Emissive map: the face is a faint pale smear in total darkness, the eye hollows hold embers.
+// The skin material multiplies this by SKIN_GLOW (snatcher-rig.js), so the embers run hot enough
+// to bloom into two red points at 20-30 m while the face smear stays faint.
 export function paintGlow(variant, layout) {
   const S = GLOW_SIZE;
   const c = makeCanvas(S);
@@ -533,7 +535,7 @@ export function paintGlow(variant, layout) {
   g.fillStyle = '#000';
   g.fillRect(0, 0, S, S);
   const p = new FacePainter(g, S, variant, layout);
-  p.blob(0, 0.005, 0.11, 0.15, 'rgba(84,79,75,1)', 'rgba(84,79,75,0)', 0, true);
+  p.blob(0, 0.005, 0.11, 0.15, 'rgba(54,51,48,1)', 'rgba(54,51,48,0)', 0, true);
   for (const e of variant.eyes) {
     p.blob(e.fx, e.fy, e.w * 1.4, e.h * 1.4, 'rgba(80,9,4,0.85)', 'rgba(60,6,3,0)', e.rot);
     p.blob(e.fx + e.w * 0.18 * Math.cos(e.rot), e.fy - e.h * 0.1, e.w * 0.26, e.w * 0.24, 'rgba(225,52,18,1)', 'rgba(150,18,6,0)', e.rot);
@@ -541,7 +543,7 @@ export function paintGlow(variant, layout) {
   // Faint ember glow deep in the mouth band.
   const { vUp, vLow } = layout.seam;
   const half = variant.seam.half;
-  g.fillStyle = 'rgba(70,8,3,0.9)';
+  g.fillStyle = 'rgba(48,5,2,0.9)';
   g.fillRect(angleToU(-half * 0.8) * S, (1 - vUp) * S + 1, (angleToU(half * 0.8) - angleToU(-half * 0.8)) * S, (vUp - vLow) * S - 2);
   return c;
 }

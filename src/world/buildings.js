@@ -54,7 +54,13 @@ function storefrontBand(B, F, kinds, rng, tint) {
     const p = F.along(w * (i + 0.5));
     const pos = { x: p.x + F.nx * 0.02, z: p.z + F.nz * 0.02 };
     if (kind !== null && kind !== undefined && kind >= 0) {
-      B.batch.wall(kind === STORE.laundry ? 'storeLit' : 'store', pos.x, 0, pos.z, w, STORE_H, yaw, storeUV(kind), shade(color(0xffffff), 0.85 + rng() * 0.25));
+      // About half the gutted (smashed / barred) shops still have a work light burning at the back:
+      // warm pockets at street level that put the figures on the pavement in silhouette. Picked by
+      // a positional hash, not B.rng, so the rest of the layout is unchanged.
+      const gutted = kind === STORE.smashed || kind === STORE.barred;
+      const hv = Math.sin(pos.x * 12.9898 + pos.z * 78.233) * 43758.5453;
+      const key = kind === STORE.laundry ? 'storeLit' : gutted && hv - Math.floor(hv) < 0.5 ? 'storeGlow' : 'store';
+      B.batch.wall(key, pos.x, 0, pos.z, w, STORE_H, yaw, storeUV(kind), shade(color(0xffffff), 0.85 + rng() * 0.25));
     }
     fronts.push({ kind, x: pos.x, z: pos.z, w, yaw });
     // A shop name board over the sign band on about half of the generic units.

@@ -522,11 +522,29 @@ function storefronts() {
         ctx.lineTo(sx, sy + 40 + rng() * 60);
         ctx.fill();
       }
+      if (kind !== STORE.pharmacy) {
+        // Glow mask (used only by the 'storeGlow' material: a work light still burning at the back
+        // of a few gutted shops). Deep and soft, cut by the fallen shelving, so whatever stands
+        // on the pavement in front of it is a silhouette.
+        const gg = glow.createRadialGradient(ox + ow * 0.42, oy + oh * 0.62, 6, ox + ow * 0.42, oy + oh * 0.62, ow * 0.62);
+        gg.addColorStop(0, '#d8d8d8');
+        gg.addColorStop(0.35, '#7a7a7a');
+        gg.addColorStop(1, '#141414');
+        glow.fillStyle = gg;
+        glow.fillRect(ox, oy, ow, oh);
+        glow.fillStyle = '#000';
+        glow.fillRect(ox + 20, oy + oh * 0.55, ow * 0.4, oh * 0.45);
+        glow.fillRect(ox + ow * 0.6, oy + oh * 0.3, ow * 0.25, oh * 0.7);
+      }
       if (kind === STORE.barred) {
         ctx.fillStyle = '#1b1b1b';
         for (let xx = ox; xx < ox + ow; xx += 22) ctx.fillRect(xx, oy, 5, oh);
         ctx.fillRect(ox, oy + oh * 0.3, ow, 6);
         ctx.fillRect(ox, oy + oh * 0.7, ow, 6);
+        glow.fillStyle = '#000';
+        for (let xx = ox; xx < ox + ow; xx += 22) glow.fillRect(xx, oy, 5, oh);
+        glow.fillRect(ox, oy + oh * 0.3, ow, 6);
+        glow.fillRect(ox, oy + oh * 0.7, ow, 6);
       } else if (kind === STORE.pharmacy) {
         // Burnt: soot blooms up the facade, half the letters gone.
         const sg = ctx.createLinearGradient(0, y0 + C, 0, y0);
@@ -887,10 +905,14 @@ function decals() {
       ctx.save();
       ctx.translate(x + 20 + rng() * (w - 40), y + 20 + rng() * (w - 40));
       ctx.rotate(rng() * Math.PI);
-      ctx.fillStyle = hsl(40, 10, 55 + rng() * 20, 0.85);
+      // rain-soaked and trodden: grey-brown, not white (pure white litter is the brightest thing
+      // in a dark street and pulls the eye away from what matters)
+      ctx.fillStyle = hsl(36, 12, 30 + rng() * 18, 0.85);
       ctx.fillRect(-14, -18, 28 + rng() * 10, 36);
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       for (let l = 0; l < 4; l++) ctx.fillRect(-10, -12 + l * 7, 18, 2);
+      ctx.fillStyle = 'rgba(30,22,16,0.35)';
+      ctx.fillRect(-14, 4 + rng() * 8, 28, 14); // wet, dirty half
       ctx.restore();
     }
   }

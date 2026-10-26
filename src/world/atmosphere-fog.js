@@ -99,6 +99,11 @@ const FRAGMENT = /* glsl */ `
     } else {
       fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
     }
+    #ifdef ATMO_FOG_SILHOUETTE
+      // Figures the player must track (the snatchers) take less of the fog at mid range, so they
+      // stay a darker shape in the mist than the street behind them; full fog again past ~75 m.
+      fogFactor *= mix( float( ATMO_FOG_SILHOUETTE ), 1.0, smoothstep( 35.0, 75.0, vFogDepth ) );
+    #endif
     gl_FragColor.rgb = mix( gl_FragColor.rgb, atmoFogCol, fogFactor );
   #else
     float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
