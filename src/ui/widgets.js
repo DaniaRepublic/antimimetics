@@ -540,7 +540,7 @@ export class Tutorial {
 
   // A level-authored zone hint, shown a few seconds after entering the zone.
   zoneHint(index, text) {
-    this.enqueue(`zone:${index}`, String(text ?? '').trim(), ZONE_HINT, 3.5);
+    this.enqueue(`zone:${index}`, String(text ?? '').trim(), { ...ZONE_HINT, zone: index }, 3.5);
   }
 
   // busy: another text channel (a level message) is on screen; new hints wait for it so the
@@ -565,7 +565,11 @@ export class Tutorial {
     if ((p?.lightLevel ?? 0) > 0.55 && this.playTime > 5) this.trigger('light');
 
     // A tip that could not be shown soon after its moment has passed is dropped.
-    if (this.queue.length) this.queue = this.queue.filter((q) => !q.spec.expires || this.playTime - q.at < q.spec.expires);
+    // ...and so is a zone's hint once the player has left that zone.
+    const zone = game.level?.currentZone;
+    const stale = (spec) => spec.zone != null && zone != null && zone !== spec.zone;
+    if (this.queue.length) this.queue = this.queue.filter((q) => (!q.spec.expires || this.playTime - q.at < q.spec.expires) && !stale(q.spec));
+    if (this.current && this.current.out < 0 && stale(this.current.spec)) this.current.out = 0;
     const urgent = this.queue[0]?.spec.urgent;
     if (!this.current && (urgent || (this.idle > 0.8 && this.quiet > 0.8))) {
       const i = this.queue.findIndex((q) => this.playTime - q.at >= q.delay);

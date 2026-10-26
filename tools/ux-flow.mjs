@@ -52,6 +52,12 @@ async function run(vp) {
   const waitStateTime = (t) => h.page.waitForFunction((x) => window.__game.stateTime > x, t, { timeout: 240000 });
   const sim = (s) => h.eval((x) => window.__game.simulate(x), s);
   const cx = Math.round(vp.width / 2), cy = Math.round(vp.height / 2);
+  // Under pointer lock, the synthetic cursor jumps of Playwright's clicks arrive as mouse-look:
+  // level the view again before screenshots that should show the street.
+  const level = () => h.eval(() => {
+    window.__game.input.consumeLook();
+    window.__game.player.pitch = 0;
+  });
 
   await waitStateTime(0.4);
   await settle(h, 1500);
@@ -137,6 +143,7 @@ async function run(vp) {
   check(brightSlider, 'pause menu has the brightness slider');
   await h.page.click('.wic-pause .wic-btn');
   check((await state()) === 'playing', 'resume -> playing');
+  await level();
 
   // Real detection: stand in a sentry's view, let its attention build.
   await h.eval(() => {
@@ -179,6 +186,7 @@ async function run(vp) {
   await waitStateTime(1.2);
   await h.page.mouse.click(cx, cy);
   check((await state()) === 'playing', 'click on the dead screen -> respawn');
+  await level();
   await sim(1.5);
   await settle(h, 500);
   await shot('respawned');

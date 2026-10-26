@@ -164,11 +164,16 @@ const CSS = `
   text-shadow: 0 0 2px #000, 0 0 16px rgba(0, 0, 0, 0.95);
 }
 
-/* tutorial hints */
+/* tutorial hints (a soft dark backing: they often sit over bright mist or a lamp) */
 .wic-tut {
   position: absolute; left: 50%; bottom: 104px; width: max-content; max-width: calc(100vw - 32px);
   transform: translateX(-50%); text-align: center; opacity: 0;
-  font: 12px/2 var(--wic-mono); letter-spacing: 0.08em; color: var(--wic-ink-dim); text-shadow: var(--wic-shadow);
+  font: 12px/2 var(--wic-mono); letter-spacing: 0.08em; color: rgba(var(--wic-ink-rgb), 0.86);
+  text-shadow: 0 0 2px #000, 0 0 10px rgba(0, 0, 0, 0.9);
+}
+.wic-tut::before {
+  content: ''; position: absolute; inset: -14px -8%; z-index: -1;
+  background: radial-gradient(ellipse at center, rgba(var(--wic-night-rgb), 0.6) 0%, rgba(var(--wic-night-rgb), 0) 72%);
 }
 .wic-tut .wic-kbd { margin: 0 0.2em; }
 

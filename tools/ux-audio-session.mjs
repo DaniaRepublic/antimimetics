@@ -251,6 +251,8 @@ async function pageSetup(o) {
     yield* crouch(true);
     yield* wait(2);
     const pat = enemy('z1_patrol');
+    // Keep the leviathan from calling during this test (a call silences every whisper).
+    if (!g.leviathan.calling) g.leviathan.callTimer = Math.max(g.leviathan.callTimer, 30);
     for (const d of [26, 20, 16, 12, 8, 5]) {
       mark(`whisper ${d}m`);
       for (let i = Math.round(4 / DT); i > 0; i--) {
@@ -291,6 +293,9 @@ async function pageSetup(o) {
       yield;
     }
     setKeys([]);
+    // Escaped after all (the AI is not deterministic): stand still and let it come.
+    for (let t = 0; t < 15 && g.state === 'playing'; t += DT) yield;
+    if (g.state === 'playing') g.bus.emit('player:caught', { enemy: sen });
     mark('caught');
     for (let t = 0; t < 6 && g.state !== 'dead'; t += DT) yield;
     yield* wait(2.5);
