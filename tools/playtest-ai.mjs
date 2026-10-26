@@ -64,7 +64,7 @@ for (const zone of zones) {
           px = q.x;
           pz = q.z;
         }
-        slow.push(`${ms.toFixed(1)} ms ${who ? who.id + '/' + who.state : '?'} ${from.x.toFixed(0)},${from.z.toFixed(0)} -> ${to.x.toFixed(0)},${to.z.toFixed(0)} (${Math.hypot(to.x - from.x, to.z - from.z).toFixed(0)} m straight, path ${path ? len.toFixed(0) + ' m' : 'NONE'})`);
+        slow.push(`${ms.toFixed(1)} ms ${who ? who.id + '/' + who.state : '?'} ${from.x.toFixed(0)},${from.z.toFixed(0)} -> ${to.x.toFixed(0)},${to.z.toFixed(0)} (${Math.hypot(to.x - from.x, to.z - from.z).toFixed(0)} m straight, path ${path ? len.toFixed(0) + ' m' : 'NONE'}, budget ${o?.maxExpansions})`);
       }
       return path;
     };
@@ -167,8 +167,9 @@ for (const zone of zones) {
       const st = stat.get(s);
       const b = s.brain;
       let home = '';
-      if (b.state === 'idle') home = Math.hypot(s.position.x - b.post.x, s.position.z - b.post.z) < 1.5 ? 'on post' : `OFF POST ${Math.hypot(s.position.x - b.post.x, s.position.z - b.post.z).toFixed(1)} m`;
-      else if (b.state === 'patrol') home = 'on route';
+      const es = b.state === 'rapture' && b.resume?.state === 'calm' ? ((b.kind === 'wander' || b.route) && !b.sleeper ? 'patrol' : 'idle') : b.state;
+      if (es === 'idle') home = Math.hypot(s.position.x - b.post.x, s.position.z - b.post.z) < 1.5 ? 'on post' : `OFF POST ${Math.hypot(s.position.x - b.post.x, s.position.z - b.post.z).toFixed(1)} m`;
+      else if (es === 'patrol') home = 'on route';
       else home = `STILL ${b.state}`;
       out.push({ ...st, end: b.state, home, stuckEvents: s.stuckEvents, asleep: b.asleep, x: +s.position.x.toFixed(1), z: +s.position.z.toFixed(1) });
     }

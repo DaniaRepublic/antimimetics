@@ -69,11 +69,16 @@ for (const zone of zones) {
     g.god = false;
     const victim = B.s(Z.victim);
     let caughtAt = null;
+    let path = null, pi = 0;
     for (let i = 0; i < 30 * 60 && g.state === 'playing'; i++) {
       const p = g.player.position;
-      g.player.yaw = B.dirToYaw(victim.position.x - p.x, victim.position.z - p.z);
-      B.held.clear();
-      B.held.add('KeyW');
+      if (i % 15 === 0) {
+        path = g.nav.findPath(p, victim.position) || [{ x: victim.position.x, z: victim.position.z }];
+        pi = 0;
+      }
+      while (pi < path.length - 1 && Math.hypot(path[pi].x - p.x, path[pi].z - p.z) < 0.5) pi++;
+      const wp = Math.hypot(victim.position.x - p.x, victim.position.z - p.z) < 4 ? victim.position : path[pi];
+      g.player.yaw = B.dirToYaw(wp.x - p.x, wp.z - p.z);
       g.input.keys.clear();
       g.input.keys.add('KeyW');
       if (g.player.crouched) g.input.pressedKeys.add('KeyC');
@@ -95,8 +100,10 @@ for (const zone of zones) {
       cam.frames++;
       if (e.state !== 'grab') cam.notGrab++;
       cam.maxSpeed = Math.max(cam.maxSpeed, e.speed, e.actualSpeed);
-      cam.minD = Math.min(cam.minD, d);
-      cam.maxD = Math.max(cam.maxD, d);
+      if (cam.frames > 3) {
+        cam.minD = Math.min(cam.minD, d);
+        cam.maxD = Math.max(cam.maxD, d);
+      }
       const want = Math.atan2(-dx, -dz);
       const err = Math.abs(Math.atan2(Math.sin(want - e.yaw), Math.cos(want - e.yaw)));
       if (cam.frames > 10) cam.maxFacing = Math.max(cam.maxFacing, err);
@@ -141,7 +148,7 @@ for (const zone of zones) {
   const c = r.cam;
   check(c.frames > 30 && c.notGrab === 0, `death cam: caught by ${c.by}, in 'grab' throughout (${c.frames} frames)`);
   check(c.maxSpeed < 0.05, `death cam: catcher stands still (max speed ${c.maxSpeed.toFixed(3)} m/s)`);
-  check(c.minD >= 0.97 && c.maxD <= 1.17, `death cam: root 1.0-1.15 m from the player (caught at ${c.startD?.toFixed(2)}, range ${c.minD.toFixed(2)}..${c.maxD.toFixed(2)})`);
+  check(c.minD >= 0.99 && c.maxD <= 1.16 && c.startD >= 0.95, `death cam: root 1.0-1.15 m from the player after 0.1 s (first frame ${c.startD?.toFixed(2)}, then ${c.minD.toFixed(2)}..${c.maxD.toFixed(2)})`);
   check(c.maxFacing < 0.35, `death cam: faces the player (max error ${c.maxFacing.toFixed(2)} rad)`);
   check(c.minHead > 0.3, `death cam: face stays in front of the camera (head-eye ${c.minHead.toFixed(2)}..${c.maxHead.toFixed(2)} m)`);
   const R = r.restored;
@@ -183,6 +190,62 @@ for (const zone of zones) {
     return { n, state: g.state, z: g.player.position.z, err };
   });
   check(r.n.exit === 1 && r.n.won === 1 && r.state === 'won', `level:exit x${r.n.exit}, game:won x${r.n.won}, state ${r.state} (z ${r.z.toFixed(1)})${r.err ? ' err ' + r.err : ''}`);
+  errors = errors.concat(h.errors);
+  await h.close();
+}
+
+// --- throwing at the plaza alarm car the way a person aims ------------------------------------
+// From every side, standing or crouched: the crosshair on the middle of the car from 6-12 m, and
+// a flat throw (pitch 0) from 8-14 m (where it used to sail over the roof). Every one of them is
+// what a player would call "a hit" and must set it off.
+{
+  console.log('\nalarm car throws');
+  const h = await launch({ query: 'autostart&god&quality=0&mute&cp=2', timeout: 120000 });
+  await h.eval(installBot, [CONFIG, { fastModels: true }]);
+  const r = await h.eval(() => {
+    const B = window.__bot, g = B.g, L = g.level;
+    const a = L.alarms.find((x) => x.id === 'plaza_alarm');
+    const c = a.collider;
+    let started = 0;
+    g.bus.on('alarm:start', (e) => {
+      if (e.id === a.id) started++;
+    });
+    const tick = () => g.__realTick(B.DT);
+    const out = { aimed: [0, 0], flat: [0, 0], misses: [] };
+    for (const crouch of [false, true]) {
+      for (let k = 0; k < 8; k++) {
+        const ang = (k / 8) * Math.PI * 2 + 0.2;
+        for (const dist of [6, 8, 10, 12, 14]) {
+          const x = c.cx + Math.cos(ang) * dist, z = c.cz + Math.sin(ang) * dist;
+          if (!g.nav.isWalkable(x, z)) continue;
+          for (const mode of ['aimed', 'flat']) {
+            if ((mode === 'aimed' && dist > 12) || (mode === 'flat' && dist < 8)) continue;
+            L.stopAlarm(a, true);
+            g.teleport(x, z, B.dirToYaw(c.cx - x, c.cz - z));
+            g.player.crouched = crouch;
+            for (let i = 0; i < 15; i++) tick();
+            // Can the player see the car from here (a throw at something hidden doesn't count)?
+            const eye = g.player.getEyePos(new window.__THREE_V());
+            if (g.world.segmentBlocked(eye, new window.__THREE_V(c.cx, 0.9, c.cz))) continue;
+            const d = Math.hypot(c.cx - x, c.cz - z);
+            g.player.pitch = mode === 'flat' ? 0 : Math.atan2(0.75 - eye.y, d);
+            g.player.bottles = 1;
+            const before = started;
+            g.input.pressedKeys.add('KeyF');
+            for (let i = 0; i < 75; i++) tick();
+            const hit = started > before;
+            out[mode][1]++;
+            if (hit) out[mode][0]++;
+            else out.misses.push(`${mode}${crouch ? '/crouch' : ''} ${dist} m @${(ang * 57.3).toFixed(0)}deg`);
+          }
+        }
+      }
+    }
+    L.stopAlarm(a, true);
+    return out;
+  });
+  check(r.aimed[0] === r.aimed[1], `aimed at the car: ${r.aimed[0]}/${r.aimed[1]} set the alarm off`);
+  check(r.flat[0] === r.flat[1], `flat throws: ${r.flat[0]}/${r.flat[1]} set it off${r.misses.length ? ' (missed: ' + r.misses.slice(0, 8).join(', ') + ')' : ''}`);
   errors = errors.concat(h.errors);
   await h.close();
 }

@@ -131,6 +131,7 @@ export class Player {
     const before = _v.copy(this.position);
     this.position.x += this.velocity.x * dt;
     this.position.z += this.velocity.z * dt;
+    this.pushOutOfSnatchers();
     this.game.world.resolveCircle(this.position, P.radius, { height: this.crouched ? 1.15 : 1.8 });
     const moved = Math.hypot(this.position.x - before.x, this.position.z - before.z);
     this.speed = dt > 0 ? moved / dt : 0;
@@ -185,6 +186,23 @@ export class Player {
     this.fovKick = damp(this.fovKick, this.sprinting ? 1 : 0, 4, dt);
     this.trauma = Math.max(0, this.trauma - dt * 0.9);
     this.shakeTime += dt;
+  }
+
+  // Snatchers are solid: you can brush past one, never walk through it.
+  pushOutOfSnatchers() {
+    const list = this.game.director?.snatchers;
+    if (!list) return;
+    const pos = this.position;
+    const min = P.radius + CONFIG.enemy.radius;
+    for (const s of list) {
+      if (!s.active) continue;
+      const dx = pos.x - s.position.x, dz = pos.z - s.position.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= min * min || d2 < 1e-8) continue;
+      const d = Math.sqrt(d2);
+      pos.x = s.position.x + (dx / d) * min;
+      pos.z = s.position.z + (dz / d) * min;
+    }
   }
 
   emitNoise(radius, loudness) {

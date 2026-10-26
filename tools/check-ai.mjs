@@ -479,6 +479,9 @@ const scenarios = [
       }
       T.setup({ enemies, light: 0.5, player: { x: 0, z: -40 } });
       g.god = true;
+      // The AI's own cost: the skinned model animation (snatcherModel.js, ~0.2 ms per visible
+      // snatcher) is measured by tools/check-snatcher-model.mjs, not here.
+      for (const s of g.director.snatchers) s.model.update = () => {};
       // Player wanders through them so perception, hearing, chases and paths all run.
       T.drive([{ x: 6, z: -70 }, { x: -6, z: -95 }, { x: 0, z: -20 }, { x: 5, z: -60 }]);
       const p = g.director.perf;
@@ -775,13 +778,14 @@ const scenarios = [
   },
 ];
 
-const h = await launch({ html, query: 'autostart&mute' });
+// quality=0 (cheapest atmosphere) unless screenshots are wanted: the AI never reads the render.
+const h = await launch({ html, query: shots ? 'autostart&mute' : 'autostart&mute&quality=0', timeout: 120000 });
 const url = h.page.url();
 const results = [];
 for (const sc of scenarios) {
   if (only && !only.includes(sc.n)) continue;
-  await h.page.goto(url);
-  await h.page.waitForFunction(() => !!window.__game);
+  await h.page.goto(url, { timeout: 120000 });
+  await h.page.waitForFunction(() => !!window.__game, null, { timeout: 120000 });
   await h.page.evaluate(HELPERS);
   const t0 = Date.now();
   let res;

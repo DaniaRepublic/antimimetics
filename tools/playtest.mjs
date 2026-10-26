@@ -23,6 +23,7 @@ const policyFilter = opt('--policies', null)?.split(',');
 const runs = Number(opt('--runs', 5));
 const offsets = opt('--offsets', null)?.split(',').map(Number);
 const showLog = args.includes('--log');
+const showPerf = args.includes('--perf');
 const trace = args.includes('--trace');
 const jsonOut = opt('--json', null);
 const html = opt('--html', 'dist/index.html');
@@ -63,7 +64,7 @@ for (const zone of zones) {
       }
       all.push(r);
       const flag = r.outcome === 'goal' ? 'OK  ' : 'FAIL';
-      console.log(`Z${zone} ${name.padEnd(12)} #${i} off ${String(offset).padStart(4)}s  ${flag} ${r.outcome.padEnd(8)} t=${String(r.time).padStart(6)}s  alerts=${r.alerts} susp=${r.suspicious} maxThreat=${r.maxThreat} chase=${r.chaseTime}s${r.footBlocks ? ' footBlocks=' + r.footBlocks : ''}${r.caughtBy ? ' by ' + r.caughtBy : ''} end=${r.pos}`);
+      console.log(`Z${zone} ${name.padEnd(12)} #${i} off ${String(offset).padStart(4)}s  ${flag} ${r.outcome.padEnd(8)} t=${String(r.time).padStart(6)}s  alerts=${r.alerts} susp=${r.suspicious} maxThreat=${r.maxThreat} chase=${r.chaseTime}s${r.footBlocks ? ' footBlocks=' + r.footBlocks : ''}${r.caughtBy ? ' by ' + r.caughtBy : ''} end=${r.pos}${showPerf ? ` | wall ${r.wall}s paths ${r.paths} (${r.pathMs} ms, max ${r.maxPathMs})` : ''}`);
       if (r.error) console.log(r.error);
       if (showLog) console.log('   ' + r.log.join('\n   '));
       if (r.trace) traces.push({ points: r.trace, caught: r.outcome === 'caught', color: r.outcome === 'goal' ? (name === 'intended' ? '#40e0ff' : '#ffe040') : '#ff4040' });

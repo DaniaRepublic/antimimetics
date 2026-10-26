@@ -76,15 +76,16 @@ export function installPolicies() {
     [[-1.2, -316.2], [-1.0, -322.5]], // hatch + pickup
     [[-0.3, -331.0], [-0.3, -339.5]], // van + hatch, then out
   ];
-  P[3].intended = (B) => {
+  // react: seconds into a call before setting off (a quick player ~0.4 s, a hesitant one ~1 s).
+  const z3Calls = (react) => (B) => {
     const g = B.g;
     B.setStanceNow('crouch');
-    // Walk to (x, z) during a call. Starts ~0.4 s into a call (reaction time), only if the call
-    // has time left for the walk; then crouches again.
+    // Walk to (x, z) during a call. Starts `react` s into a call, only if the call has time
+    // left for the walk; then crouches again.
     const hop = (x, z) => {
       const p = g.player.position;
       const need = Math.hypot(x - p.x, z - p.z) / 3.0;
-      B.waitUntil(() => B.calling() && g.leviathan.callTime > 0.4 && B.callLeft() > need - 0.6, 90);
+      B.waitUntil(() => B.calling() && g.leviathan.callTime > react && B.callLeft() > need - 0.6 - Math.max(0, react - 0.4), 90);
       const t0 = B.run.t;
       const ok = B.moveTo(x, z, { stance: 'walk', tol: 0.5 });
       B.setStanceNow('crouch');
@@ -95,6 +96,20 @@ export function installPolicies() {
     for (const [[ex, ez], [sx, sz]] of Z3_POCKETS) {
       hop(ex, ez);
       B.moveTo(sx, sz, { stance: 'crouch', tol: 0.5 });
+    }
+  };
+  P[3].intended = z3Calls(0.4);
+  P[3]['intended-slow'] = z3Calls(1.0);
+  // Knows the rule but not the cover: walks up the middle only during calls, crouches in place
+  // (wherever that is) between them.
+  P[3]['calls-only'] = (B) => {
+    const g = B.g;
+    B.setStanceNow('crouch');
+    const pts = [[0, -232], [0, -244], [0, -256], [0, -268], [0, -280], [0, -292], [0, -304], [0, -316], [0, -328], [-1, -340]];
+    for (const [x, z] of pts) {
+      B.waitUntil(() => B.calling() && g.leviathan.callTime > 0.5, 90);
+      B.moveTo(x, z, { stance: 'walk', tol: 0.5, abortIf: () => !B.calling() });
+      B.setStanceNow('crouch');
     }
   };
   P[3].careless = (B) => {
@@ -159,6 +174,34 @@ export function installPolicies() {
     B.cutChain({ stance: 'walk' });
     B.path(Z4_RUN, { stance: 'sprint' });
   };
+  // ============================================================================================
+  // Escapes (every zone): walk out in the open until one of them shrieks, then sprint away,
+  // break line of sight, crouch behind something and keep still. Success = not caught, and every
+  // snatcher that saw us has given up its search and gone back to its post or route.
+  const escape = (provoke) => (B) => {
+    const g = B.g;
+    B.run.goal = 'escape';
+    B.setStanceNow('walk');
+    for (const [x, z] of provoke) {
+      B.moveTo(x, z, { stance: 'walk', abortIf: () => B.run.alerts > 0 });
+      if (B.run.alerts > 0) break;
+    }
+    if (!B.run.alerts) B.waitUntil(() => B.run.alerts > 0, 20);
+    if (!B.run.alerts) {
+      B.log('escape: nobody noticed us');
+      return;
+    }
+    const seen = new Set(B.run.alertIds);
+    if (!B.fleeAndHide()) return;
+    const back = B.waitUntil(() => [...seen].every((id) => ['idle', 'patrol', 'rapture'].includes(B.s(id).state)), 90);
+    B.log('escape: hunters', [...seen].join(','), back ? 'all back on duty' : 'NOT back');
+    if (back) B.run.success = true;
+  };
+  P[1].escape = escape([[0, -40], [0, -60], [0, -80], [0, -100]]);
+  P[2].escape = escape([[12, -152], [2, -165], [0, -182]]);
+  P[3].escape = escape([[2, -232], [0, -250], [0, -270]]);
+  P[4].escape = escape([[-6, -360], [-2, -380]]);
+
   // Careless in the garage: walk upright straight up the east aisle, right past the sleeper.
   P[4]['garage-walk'] = (B) => {
     B.moveTo(-15.2, -343, { stance: 'walk' });

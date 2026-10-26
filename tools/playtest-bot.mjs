@@ -49,6 +49,10 @@ export function installBot([CFG, { fastModels = true } = {}]) {
   });
   on('enemy:suspicious', () => B.run.suspicious++);
   on('enemy:lost', (e) => log('lost', e.enemy?.id));
+  on('enemy:giveup', (e) => {
+    B.run.giveups = (B.run.giveups || 0) + 1;
+    log('giveup', e.enemy?.id);
+  });
   on('alarm:start', (e) => {
     B.run.alarms++;
     log('alarm', e.id);
@@ -208,6 +212,84 @@ export function installBot([CFG, { fastModels = true } = {}]) {
         pauseIf: () => B.hereExposure(o) < th * 0.5 && B.hopExposure(x, z, o).worst >= th * 1.5 && B.run.t < (B._pauseCap ?? Infinity) })) return false;
     }
     return true;
+  };
+
+  // --- fleeing ---------------------------------------------------------------------------------
+  // Sprint to a spot 10-28 m away, away from whoever is chasing, with something solid between
+  // them and it; crouch there and keep still until nobody is chasing or searching any more.
+  // Flees again if a searcher comes too close. Returns true once they have all given up.
+  B.hunters = () => g.director.snatchers.filter((s) => s.active && (s.state === 'chase' || s.state === 'search' || s.state === 'suspicious' && s.detection > 0.6));
+  B.pickHide = () => {
+    const p = g.player.position;
+    const hunters = B.hunters();
+    const V = window.__THREE_V;
+    const eye = new V(), pt = new V();
+    let best = null;
+    for (let k = 0; k < 160; k++) {
+      const a = (k / 160) * Math.PI * 2 * 7.3;
+      const r = 10 + (k % 10) * 2;
+      const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+      if (!g.nav.isWalkable(x, z) || !g.nav.sameRegion(p.x, p.z, x, z)) continue;
+      let score = 0, ok = true;
+      for (const s of hunters) {
+        const dx = x - s.position.x, dz = z - s.position.z;
+        const away = ((x - p.x) * (p.x - s.position.x) + (z - p.z) * (p.z - s.position.z)) / (r * (Math.hypot(p.x - s.position.x, p.z - s.position.z) || 1));
+        if (away < 0.2) ok = false;
+        s.getEyePos(eye);
+        pt.set(x, 0.7, z);
+        if (!g.world.segmentBlocked(eye, pt)) score -= 3;
+        score += Math.min(Math.hypot(dx, dz), 30) * 0.1 + away;
+      }
+      // something tall right next to it to crouch behind
+      const cover = g.world.query(x - 1.2, z - 1.2, x + 1.2, z + 1.2).some((c) => c.enabled && c.blocksSight && c.maxY >= 1.0 && c.minY < 0.5);
+      if (cover) score += 1.5;
+      if (!ok) continue;
+      if (g.atmosphere.lightLevelAt({ x, z }) > 0.35) score -= 2;
+      if (!best || score > best.score) {
+        // Only somewhere we can actually run to without a long detour or passing them.
+        const path = g.nav.findPath(p, { x, z }, { maxExpansions: 6000 });
+        if (!path) continue;
+        let len = 0, px = p.x, pz = p.z, nearHunter = false;
+        for (const q of path) {
+          len += Math.hypot(q.x - px, q.z - pz);
+          px = q.x;
+          pz = q.z;
+          for (const s of hunters) if (Math.hypot(q.x - s.position.x, q.z - s.position.z) < 4) nearHunter = true;
+        }
+        if (nearHunter || len > r * 1.5 + 3) continue;
+        best = { x, z, score };
+      }
+    }
+    return best;
+  };
+  B.fleeAndHide = ({ maxFlees = 4, hideTime = 60 } = {}) => {
+    for (let n = 0; n < maxFlees; n++) {
+      const spot = B.pickHide();
+      if (!spot) {
+        log('flee: nowhere to hide');
+        return false;
+      }
+      log('flee ->', spot.x.toFixed(1), spot.z.toFixed(1), 'score', spot.score.toFixed(1));
+      B.moveTo(spot.x, spot.z, { stance: 'sprint', tol: 0.8, timeout: 20 });
+      B.setStanceNow('crouch');
+      const t0 = B.run.t;
+      let fleeAgain = false;
+      while (B.run.t - t0 < hideTime) {
+        B.held.clear();
+        B.tick();
+        if (!B.hunters().length && g.director.snatchers.every((s) => !s.active || s.state !== 'investigate' || B.dist(s, g.player.position.x, g.player.position.z) > 8)) {
+          log('flee: they gave up');
+          return true;
+        }
+        const close = g.director.snatchers.some((s) => s.active && (s.state === 'chase' || s.state === 'search') && B.dist(s, g.player.position.x, g.player.position.z) < (s.state === 'chase' ? 9 : 5));
+        if (close) {
+          fleeAgain = true;
+          break;
+        }
+      }
+      if (!fleeAgain) return !B.hunters().length;
+    }
+    return false;
   };
 
   // --- movement ---------------------------------------------------------------------------------
@@ -407,6 +489,9 @@ export function installBot([CFG, { fastModels = true } = {}]) {
     const pol = window.__policies?.[zone]?.[name];
     if (!pol) return { error: `no policy ${zone}/${name}` };
     B.reset(zone);
+    const perf = g.director.perf;
+    const perf0 = { paths: perf.paths, pathMs: perf.pathMs, wall: performance.now() };
+    perf.maxPathMs = 0;
     const r = {
       zone, name, runIndex, t: 0, frames: 0, goal: GOALS[zone], success: false, caught: false, caughtBy: null,
       alerts: 0, alertIds: [], suspicious: 0, alarms: 0, throws: 0, checkpoints: [], exits: 0, maxThreat: 0, chaseTime: 0,
@@ -436,6 +521,10 @@ export function installBot([CFG, { fastModels = true } = {}]) {
     r.time = +r.t.toFixed(1);
     r.maxThreat = +r.maxThreat.toFixed(2);
     r.chaseTime = +r.chaseTime.toFixed(1);
+    r.paths = perf.paths - perf0.paths;
+    r.pathMs = +(perf.pathMs - perf0.pathMs).toFixed(0);
+    r.maxPathMs = +perf.maxPathMs.toFixed(1);
+    r.wall = +((performance.now() - perf0.wall) / 1000).toFixed(1);
     delete r.t;
     return r;
   };

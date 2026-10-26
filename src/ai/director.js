@@ -136,7 +136,7 @@ export class Director {
       s.queued = false;
       if (!s.pathPending || !s.goal) continue;
       const t0 = performance.now();
-      const path = nav.findPath(s.position, s.goal);
+      const path = nav.findPath(s.position, s.goal, { maxExpansions: s.pathBudget || 40000 });
       const ms = performance.now() - t0;
       this.perf.pathMs += ms;
       this.perf.maxPathMs = Math.max(this.perf.maxPathMs, ms);
@@ -224,10 +224,10 @@ export class Director {
     }
   }
 
-  // A shriek carries ~26 m: whoever hears it hurries to where the shrieker saw the player.
+  // A shriek carries ~26 m: whoever hears it hurries to where the shrieker saw the player going
+  // (a little ahead of the sighting, so the others close in from in front, not behind).
   shout(src) {
-    const seen = src.brain.lastSeenPos;
-    const pos = { x: seen.x, z: seen.z };
+    const pos = src.brain.extrapolate(TUNE.shoutLead, { x: 0, z: 0 });
     for (const s of this.snatchers) {
       if (s === src || !s.active) continue;
       if (s.brain.hearing(src.position, E.alertShoutRadius) >= 0) s.brain.hearShout(pos);

@@ -14,6 +14,15 @@ const LONG_TRIP = 40; // metres: a failed search longer than this is retried in 
 const MAX_HOPS = 16;
 const HOP_IMMEDIATELY = 90;
 const CULL_DISTANCE = 140; // beyond this the mist hides them anyway
+// A* budgets (expansions, ~0.6 us each). Every ordinary trip in the level needs < 700; only the
+// detours round a fence or a block (road <-> parking structure: 15 m apart, 90 m round) need
+// 5-12k, at 5-20 ms a search. Errands (investigate, search, alarm, chase) don't take such
+// detours: they walk up to the obstacle and look across. Going home must succeed, so it retries
+// once without a cap. (tools/playtest-ai.mjs logs every search over 3 ms.)
+const ERRAND_BUDGET = 1500;
+const HOME_BUDGET = 40000;
+const UNREACHABLE_MEMORY = 2; // s: don't re-search toward a goal that just failed (within 3 m)
+const ERRAND_STATES = new Set(['investigate', 'search', 'alarm', 'chase', 'suspicious', 'grab']);
 
 function seedFrom(id, index) {
   let h = 2166136261 ^ index;
@@ -161,9 +170,41 @@ export class Snatcher {
         return;
       }
     }
+    this.errand = ERRAND_STATES.has(this.brain?.state);
+    this.pathBudget = this.errand ? ERRAND_BUDGET : ERRAND_BUDGET * 2;
+    // This errand's goal could not be reached a moment ago: walk as close as a straight line allows.
+    const u = this.unreachable;
+    if (this.errand && u && this.game.time - u.t < UNREACHABLE_MEMORY && Math.hypot(u.x - x, u.z - z) < 3) {
+      if (!this.approach()) {
+        this.path = null; // already as close as it gets: stay and look
+        this.arrived = true;
+      }
+      return;
+    }
     // Far beyond what one search can cover: don't pay for a doomed A*, hop straight away.
     if (Math.hypot(x - pos.x, z - pos.z) > HOP_IMMEDIATELY && this.tryHop()) return;
     this.requestPath();
+  }
+
+  // Walk straight toward the goal as far as the nav grid allows (e.g. up to a fence) and stop
+  // there. Returns false if that gets nowhere useful.
+  approach() {
+    const nav = this.game.nav;
+    const pos = this.position, g = this.goal;
+    const start = nav.isWalkable(pos.x, pos.z) ? pos : nav.nearestWalkable(pos.x, pos.z, 3);
+    if (!start || !g) return false;
+    const dx = g.x - start.x, dz = g.z - start.z;
+    const d = Math.hypot(dx, dz);
+    let best = null;
+    for (let k = 0.5; k < d; k += 0.5) {
+      const x = start.x + (dx / d) * k, z = start.z + (dz / d) * k;
+      if (!nav.isWalkable(x, z) || !nav.lineWalkable(start.x, start.z, x, z)) break;
+      best = { x, z };
+    }
+    if (!best || Math.hypot(best.x - pos.x, best.z - pos.z) < 1) return false;
+    this.clearHops();
+    this.setPath([best]);
+    return true;
   }
 
   // The walkable end point if the nav grid allows a straight walk from here to (x, z), else null.
@@ -199,7 +240,7 @@ export class Snatcher {
   requestPath() {
     this.pathPending = true;
     if (this.director) this.director.requestPath(this);
-    else this.receivePath(this.game.nav.findPath(this.position, this.goal));
+    else this.receivePath(this.game.nav.findPath(this.position, this.goal, { maxExpansions: this.pathBudget || HOME_BUDGET }));
   }
 
   // Called by the director's throttled path queue.
@@ -208,7 +249,20 @@ export class Snatcher {
     this.pathPending = false;
     if (!path || !path.length) {
       if (this.tryHop()) return;
+      const final = this.hopFinal || this.goal;
       this.clearHops();
+      if (final && this.errand) {
+        // Not worth a detour: go as close as a straight line allows, then look from there.
+        this.goal = { x: final.x, z: final.z };
+        this.unreachable = { x: final.x, z: final.z, t: this.game.time };
+        if (this.approach()) return;
+      } else if (final && (this.pathBudget || 0) < HOME_BUDGET) {
+        // Home is round a detour: worth one uncapped search.
+        this.goal = { x: final.x, z: final.z };
+        this.pathBudget = HOME_BUDGET;
+        this.requestPath();
+        return;
+      }
       this.path = null;
       this.pathFailed = true;
       return;
