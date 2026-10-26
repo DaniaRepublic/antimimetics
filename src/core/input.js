@@ -104,11 +104,13 @@ export class Input {
   }
 
   // A refusal after a successful lock is temporary (browsers refuse re-locking for ~1 s after
-  // Esc), so only switch to drag-to-look when the lock has never worked in this session. A
-  // SecurityError (a sandboxed iframe without allow-pointer-lock) or a missing API is final: stop
-  // asking, since every refused request also prints an error in the console.
+  // Esc), so only switch to drag-to-look when the lock has never worked in this session. A sandboxed
+  // iframe without allow-pointer-lock (or no API at all) is final: stop asking, since every refused
+  // request also prints an error in the console. (Other SecurityErrors, e.g. "the user has exited
+  // the lock before this request was completed", are transient.)
   lockRefused(err) {
-    if (err && (err.name === 'SecurityError' || err.name === 'NotSupportedError')) this.lockBlocked = true;
+    const sandboxed = err?.name === 'SecurityError' && /sandbox/i.test(String(err.message));
+    if (sandboxed || err?.name === 'NotSupportedError') this.lockBlocked = true;
     if (!this.everLocked || this.lockBlocked) this.pointerLockFailed = true;
     this.bus.emit('input:lockfailed');
   }

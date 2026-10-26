@@ -66,7 +66,12 @@ export async function launch({
   } else {
     await top.goto(url);
   }
-  await target.waitForFunction(() => !!window.__game || !!window.__gameError, null, { timeout, polling: 100 });
+  // Ready = the game has drawn its first frame (shaders compiled), or failed to start. rAF polling:
+  // a long first frame cannot be overtaken (a navigation queued behind it would time out).
+  await target.waitForFunction(
+    () => !!window.__gameError || (!!window.__game && !(window.__game.frames === 0)),
+    null, { timeout, polling: 'raf' },
+  );
   const bootError = await target.evaluate(() => window.__gameError || null);
   if (bootError) errors.push(`[boot] ${bootError}`);
   // Let a few real frames render (shader compilation etc).

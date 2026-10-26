@@ -160,10 +160,11 @@ while ((await ev(() => window.__game.time)) < target) {
     if (episode % 2 === 0) await ev(() => window.dispatchEvent(new Event('resize')));
     await run(4);
   }
-  // 7. Real frames now and then (renderer memory, programs).
-  if (episode % 3 === 0) await frames(3);
+  // 7. Real frames: in every zone during the first two tours (so every texture and shader the
+  // level needs has been uploaded before the baseline), then every third episode.
+  if (episode <= 2 * ZONES.length || episode % 3 === 0) await frames(3);
   const m = await snapshot(`episode ${episode} (z${z.cp})`);
-  if (episode === ZONES.length) warm = m; // every zone visited once: pools and caches are warm
+  if (episode === 2 * ZONES.length) warm = m; // two tours: pools, caches and GPU uploads are warm
 }
 
 // Respawn mid-call, and win while an enemy is mid-grab.
@@ -216,7 +217,7 @@ const report = await h.eval(() => ({
   errorLog: window.__game.errorLog,
 }));
 const keys = ['renderer', 'gpu', 'children', 'objects', 'colliders', 'levFeet', 'hashEntries', 'geometries', 'textures', 'programs', 'heapMB', 'listeners', 'dom', 'voices', 'audioNodes', 'projectiles', 'pathCache'];
-console.log(`\n=== growth from warm-up (episode ${ZONES.length}, t=${base.t}s) to end (t=${end.t}s) ===`);
+console.log(`\n=== growth from warm-up (episode ${2 * ZONES.length}, t=${base.t}s) to end (t=${end.t}s) ===`);
 for (const k of keys) console.log(`${k.padEnd(12)} ${String(base[k]).padStart(8)} -> ${String(end[k]).padStart(8)}`);
 console.log(`peak renderer RSS ${peakRss} MB`);
 console.log('\nedge cases:', JSON.stringify(edge));
@@ -255,6 +256,10 @@ if (edge.stuckRapture) problems.push('snatchers left in rapture after a respawn 
 if (edge.callingAfterRespawn) problems.push('the call kept going through a respawn');
 if (edge.stateAfterExitDuringGrab !== 'caught') problems.push('exit trigger during a grab changed the state');
 if (edge.won !== 'won' || edge.afterCatchWhileWon !== 'won' || edge.respawnFromWon) problems.push('win / catch-after-win handling');
+// Warnings: growth that is bounded by design but still worth fixing.
+if (end.colliders > base.colliders) {
+  console.log(`\nWARN colliders grew ${base.colliders} -> ${end.colliders} (${end.levFeet - base.levFeet} more 'leviathan-foot' boxes; capped at 600 by the leviathan, after which its needles stop being solid). Recycle one box per leg with CollisionWorld.updateBox.`);
+}
 if (problems.length) {
   console.log('\nPROBLEMS:\n- ' + problems.join('\n- '));
   process.exitCode = 1;
