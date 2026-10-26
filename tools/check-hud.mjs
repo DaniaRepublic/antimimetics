@@ -262,8 +262,15 @@ async function flow() {
     g.setState('caught');
   });
   await h.page.waitForFunction(() => window.__game.state === 'dead', null, { timeout: 300000 });
-  await h.page.mouse.click(640, 360);
-  check((await state()) === 'dead', 'retry ignores an immediate click');
+  // A click the moment the dead screen comes up (dispatched in the same task, so slow headless
+  // frames can't make it "late") must not skip it.
+  const early = await h.eval(() => {
+    const g = window.__game;
+    g.setState('dead');
+    window.dispatchEvent(new MouseEvent('click', { button: 0 }));
+    return g.state;
+  });
+  check(early === 'dead', 'retry ignores an immediate click');
   await waitStateTime(1.2);
   await h.page.keyboard.press('Enter');
   check((await state()) === 'playing', 'enter on dead screen -> respawn');

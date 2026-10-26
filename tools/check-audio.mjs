@@ -128,7 +128,9 @@ async function gameRun() {
   console.log('\n== game run ==');
   // (a) before init and with ?mute: events must be harmless and silent.
   for (const query of ['autostart', 'autostart&mute']) {
-    const h = await launch({ html: 'dist/index.html', query });
+    // quality=0: the merged atmosphere at full quality makes SwiftShader frames take seconds,
+    // and this test needs the game loop (and so audio.update) to keep running.
+    const h = await launch({ html: 'dist/index.html', query: `${query}&quality=0` });
     const r = await h.eval(() => {
       const g = window.__game;
       if (location.search.includes('mute')) g.audio.init();
@@ -152,7 +154,7 @@ async function gameRun() {
 
   // (a2) title screen: a real click must start audio (gesture path + game.begin()), ?mute must not.
   for (const query of ['', 'mute']) {
-    const h = await launch({ html: 'dist/index.html', query });
+    const h = await launch({ html: 'dist/index.html', query: [query, 'quality=0'].filter(Boolean).join('&') });
     await h.page.mouse.click(640, 360);
     await h.page.waitForTimeout(1500);
     const r = await h.eval(() => ({ state: window.__game.state, ctx: window.__game.audio.ctx?.state ?? null, stats: window.__game.audio.stats() }));
@@ -163,7 +165,7 @@ async function gameRun() {
   }
 
   // (b) full run
-  const h = await launch({ html: 'dist/index.html', query: 'autostart' });
+  const h = await launch({ html: 'dist/index.html', query: 'autostart&quality=0' });
   // This is an audio test: freeze the AI and the leviathan so that, once the real modules are
   // merged, snatchers don't chase / catch the player and the leviathan doesn't call on its own in
   // the middle of an assertion. Threat / chasing are then pinned as own data properties (shadowing
@@ -294,6 +296,8 @@ async function gameRun() {
 
   // Let everything drain, then compare with the baseline.
   await h.page.waitForTimeout(12000);
+  // (one engine update after the wait, however slow the headless frames are)
+  await h.eval(() => window.__game.audio.update(1 / 60));
   const drained = await stats();
   console.log('  drained:', JSON.stringify(drained));
   if (drained.voices > 6) fail(`voices did not drain: ${drained.voices}`);
@@ -436,7 +440,7 @@ async function gameRun() {
 // 46 ms windows) and true peak in dBFS.
 async function levels() {
   console.log('\n== mix levels (dBFS at the output) ==');
-  const h = await launch({ html: 'dist/index.html', query: 'autostart&god' });
+  const h = await launch({ html: 'dist/index.html', query: 'autostart&god&quality=0' });
   await h.eval(() => {
     const g = window.__game;
     g.audio.init();

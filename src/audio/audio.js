@@ -504,12 +504,18 @@ export class AudioEngine {
     const p = chain.panner;
     const y = pos.y ?? chain.pos.y;
     if (!Number.isFinite(pos.x) || !Number.isFinite(y) || !Number.isFinite(pos.z)) return;
-    chain.pos.set(pos.x, y, pos.z);
-    if (p.positionX) {
-      p.positionX.value = chain.pos.x;
-      p.positionY.value = chain.pos.y;
-      p.positionZ.value = chain.pos.z;
-    } else p.setPosition(chain.pos.x, chain.pos.y, chain.pos.z);
+    // Position writes go through the audio thread's parameter machinery: skip them for voices
+    // that have not moved (most of them never do).
+    const same = pos === chain.pos || Math.abs(pos.x - chain.pos.x) + Math.abs(y - chain.pos.y) + Math.abs(pos.z - chain.pos.z) <= 0.01;
+    if (pos !== chain.pos) chain.pos.set(pos.x, y, pos.z);
+    if (immediate || !same || !chain.placed) {
+      chain.placed = true;
+      if (p.positionX) {
+        p.positionX.value = chain.pos.x;
+        p.positionY.value = chain.pos.y;
+        p.positionZ.value = chain.pos.z;
+      } else p.setPosition(chain.pos.x, chain.pos.y, chain.pos.z);
+    }
     const d = chain.pos.distanceTo(this.listenerPos);
     const air = clamp(20000 * Math.exp(-d / 38), 700, 20000);
     const ref = chain.ref;
