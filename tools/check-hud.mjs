@@ -267,6 +267,9 @@ async function flow() {
   // frames can't make it "late") must not skip it.
   const early = await h.eval(() => {
     const g = window.__game;
+    // (through 'caught' so the dead screen is shown afresh: re-entering the same state is a
+    // no-op for the HUD, and its real-time clock would still count from the simulated entry)
+    g.setState('caught');
     g.setState('dead');
     window.dispatchEvent(new MouseEvent('click', { button: 0 }));
     return g.state;

@@ -41,14 +41,16 @@ const TAU = Math.PI * 2;
 // whisper 8-16 m away 13-17 dB over everything else above 4 kHz and level with it at 0.5-4 kHz;
 // footfalls near ~-15 / far ~-26, with the near ones still ~-30 above 200 Hz; the call ~-12 with
 // everything else ducked under it (master RMS ~-14 dBFS against ~-23 before it); the grab
-// ~-18.5 dBFS RMS; master true peak ~-2.5 dBFS.
+// ~-18 dBFS RMS and ~-20 above 200 Hz, just over the chase that leads into it (~-18.4 / -21: a
+// chasing snatcher's whisper at 3 m used to peak at -2.4 dBFS and outweigh the grab on small
+// speakers by 6 dB); master true peak ~-2.5 dBFS.
 const LEVEL = {
   wind: 0.3, drone: 0.09, tinnitusMin: 0.0015, tinnitusMax: 0.02, heart: 0.2, chase: 0.3,
   footfall: 0.6, call: 1.3, legGroan: 0.55,
   metalGroan: 0.5, structureCreak: 0.4, distantWail: 0.3,
   whisper: 3.2, questionCreak: 3.8, shriek: 0.75, stinger: 0.32, hiss: 0.5, exhale: 0.9,
   creatureStep: 0.4, footstep: 0.55, breath: 0.42, gasp: 0.4, whoosh: 0.28, emptyClick: 0.3, clink: 0.25,
-  shatter: 2.0, alarm: 0.9, chainGrind: 0.9, gateOpen: 0.65, chime: 0.08, swell: 0.3, grab: 0.21, ending: 0.32,
+  shatter: 2.0, alarm: 0.9, chainGrind: 0.9, gateOpen: 0.65, chime: 0.08, swell: 0.3, grab: 0.24, ending: 0.32,
 };
 
 // How much each bus is kept while the leviathan calls.
@@ -78,7 +80,7 @@ const WHISPER_STYLES = {
   calm: { rate: 5, loud: 0.6, phrase: [3, 8], pause: [0.8, 3.2], fric: 0.45, reverse: 0.25, voiced: 0.08, click: [2.5, 7], clickBurst: [1, 2] },
   hunt: { rate: 6.5, loud: 0.8, phrase: [4, 10], pause: [0.4, 1.4], fric: 0.55, reverse: 0.3, voiced: 0.12, click: [0.9, 2.2], clickBurst: [2, 4], clickLoud: 1.2 },
   listen: { rate: 0, click: [0.5, 1.2], clickBurst: [2, 4], clickLoud: 1.3 },
-  chase: { rate: 8.5, loud: 1, phrase: [6, 14], pause: [0.15, 0.5], fric: 0.7, reverse: 0.15, voiced: 0.3, click: [3, 6], clickBurst: [1, 2] },
+  chase: { rate: 8.5, loud: 0.7, phrase: [6, 14], pause: [0.15, 0.5], fric: 0.7, reverse: 0.15, voiced: 0.3, click: [3, 6], clickBurst: [1, 2] },
   trance: { rate: 3.2, loud: 0.45, phrase: [2, 5], pause: [1.5, 4], fric: 0.3, reverse: 0.6, voiced: 0.05, click: [4, 9], clickBurst: [1, 1] },
 };
 const STATE_STYLE = {
@@ -506,12 +508,15 @@ export class AudioEngine {
     const p = chain.panner;
     const y = pos.y ?? chain.pos.y;
     if (!Number.isFinite(pos.x) || !Number.isFinite(y) || !Number.isFinite(pos.z)) return;
-    // Position writes go through the audio thread's parameter machinery: skip them for voices
-    // that have not moved (most of them never do).
-    const same = pos === chain.pos || Math.abs(pos.x - chain.pos.x) + Math.abs(y - chain.pos.y) + Math.abs(pos.z - chain.pos.z) <= 0.01;
     if (pos !== chain.pos) chain.pos.set(pos.x, y, pos.z);
-    if (immediate || !same || !chain.placed) {
-      chain.placed = true;
+    // Position writes go through the audio thread's parameter machinery: skip them for voices
+    // that have not moved (most of them never do). Measured from the last position written, not
+    // last frame's: a snatcher walking at 1.25 m/s moves < 1 cm per frame at 144 Hz and up, and
+    // would otherwise never be written at all (its whisper left behind where it started).
+    const w = chain.written;
+    if (immediate || !w || Math.abs(chain.pos.x - w.x) + Math.abs(chain.pos.y - w.y) + Math.abs(chain.pos.z - w.z) > 0.01) {
+      if (w) w.copy(chain.pos);
+      else chain.written = chain.pos.clone();
       if (p.positionX) {
         p.positionX.value = chain.pos.x;
         p.positionY.value = chain.pos.y;

@@ -188,8 +188,9 @@ const CSS = `
 .wic-rec__mark { margin-top: 11px; display: flex; align-items: center; gap: 9px; opacity: 0; letter-spacing: 0.22em; text-transform: uppercase; font-size: 10.5px; }
 .wic-rec__diamond { width: 6px; height: 6px; transform: rotate(45deg); border: 1px solid var(--wic-ink); }
 
+/* (at the very top: it shows at the start of play in an embed, when the zone card is up at 13vh) */
 .wic-notice {
-  position: absolute; left: 50%; top: 10vh; transform: translateX(-50%);
+  position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
   width: max-content; max-width: calc(100vw - 32px); padding: 9px 16px;
   border: 1px solid rgba(var(--wic-ink-rgb), 0.22); background: rgba(var(--wic-night-rgb), 0.72);
   font: 12px/1.5 var(--wic-mono); letter-spacing: 0.06em; text-align: center; opacity: 0;
@@ -434,6 +435,9 @@ const CSS = `
   88.4% { opacity: 0; transform: translate(0, 0); }
 }
 
+@media (max-width: 860px) {
+  .wic-notice { top: 36px; } /* below the REC tag once they would meet */
+}
 @media (max-width: 640px) {
   .wic-title__shade {
     background:

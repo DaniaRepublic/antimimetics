@@ -686,14 +686,19 @@ export function grab(b) {
 
   const n = b.noise('white', t, cut);
   const ng = b.gain(0);
-  perc(ng.gain, t, 0.9, 0.002, 0.12, cut);
+  perc(ng.gain, t, 1.2, 0.002, 0.15, cut);
   b.chain(n, ng, out);
-  shriek(b.fork(out, t + 0.03), { pitch: 1.25, length: 1.3 });
+  // The scream carries the moment on small speakers, which play nothing of the sub drop below:
+  // it has to be at least as present as the chase that led here (measured in game: chase ~-19
+  // dBFS RMS above 200 Hz; with the shriek at unity the grab was ~-26 there).
+  const scream = b.gain(1.9);
+  scream.connect(out);
+  shriek(b.fork(scream, t + 0.03), { pitch: 1.25, length: 1.3 });
   // (a sub drop, not a 1.3 s square wave: driven harder it would be most of the energy)
   const sub = b.osc('sine', 90, t, cut);
   contour(sub.frequency, [[t, 95], [cut, 24]]);
   const sg = b.gain(0);
-  lines(sg.gain, [[t, 0], [t + 0.02, 0.55], [t + 0.5, 0.4], [cut, 0.25]]);
+  lines(sg.gain, [[t, 0], [t + 0.02, 0.38], [t + 0.5, 0.26], [cut, 0.14]]);
   b.chain(sub, sg, b.shaper(driveCurve(ctx, 2)), out);
   b.chain(b.sample(pick(banks.rattle(ctx)), t + 0.04, 0.55), b.gain(0.5), out);
 

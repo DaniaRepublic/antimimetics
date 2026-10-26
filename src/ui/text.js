@@ -67,7 +67,7 @@ export const PAUSE = {
 export const CALIBRATE = {
   tag: 'Before the tape starts',
   title: 'Brightness',
-  body: 'Raise the brightness until the mark below is only just visible.',
+  body: 'Adjust the brightness until the mark below is only just visible.',
   aside: 'The dark is where you hide. Keep it dark, just not blind.',
   hint: 'drag or use the arrow keys · also in the pause menu',
   go: 'continue',
