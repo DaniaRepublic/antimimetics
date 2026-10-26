@@ -82,6 +82,9 @@ const BOX_FACES = [
 ];
 export const FACE = { px: 1, nx: 2, py: 4, ny: 8, pz: 16, nz: 32, all: 63, noBottom: 55 };
 
+// Opaque flat ground layers that may overlap each other (see Batch.flat).
+const STACKED_FLATS = new Set(['road', 'asphalt', 'paving', 'pavers', 'grass']);
+
 export class Batch {
   // chunkSizes: per-material override of chunkSize (Infinity = one mesh for the whole level).
   // Light, sparse materials gain nothing from culling, so they are merged whole to save draw calls.
@@ -91,6 +94,7 @@ export class Batch {
     this.extras = extras; // { materialKey: { attrName: size } }
     this.buffers = new Map();
     this.triangles = 0;
+    this.flatCounts = {}; // per material key, for STACKED_FLATS
   }
 
   buffer(key, z) {
@@ -202,6 +206,13 @@ export class Batch {
 
   // Flat horizontal quad (decals, ground pieces) centred at x/z with yaw, at height y.
   flat(key, x, y, z, w, d, yaw, uvRect, color = WHITE, extra = null) {
+    if (STACKED_FLATS.has(key)) {
+      // Opaque ground layers of one material can overlap (a crossing's two road strips, both at
+      // the same height): each new strip sits a hair above the last, so they never z-fight in
+      // blocky stairs; the later one simply wins.
+      const n = (this.flatCounts[key] = (this.flatCounts[key] ?? -1) + 1);
+      y += (n % 6) * 0.0015;
+    }
     const c = Math.cos(yaw), s = Math.sin(yaw);
     const corner = (lx, lz) => ({ x: x + c * lx + s * lz, y, z: z - s * lx + c * lz });
     const hw = w / 2, hd = d / 2;

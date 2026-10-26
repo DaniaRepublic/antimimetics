@@ -54,7 +54,13 @@ function storefrontBand(B, F, kinds, rng, tint) {
     const p = F.along(w * (i + 0.5));
     const pos = { x: p.x + F.nx * 0.02, z: p.z + F.nz * 0.02 };
     if (kind !== null && kind !== undefined && kind >= 0) {
-      B.batch.wall(kind === STORE.laundry ? 'storeLit' : 'store', pos.x, 0, pos.z, w, STORE_H, yaw, storeUV(kind), shade(color(0xffffff), 0.85 + rng() * 0.25));
+      // About half the gutted (smashed / barred) shops still have a work light burning at the back:
+      // warm pockets at street level that put the figures on the pavement in silhouette. Picked by
+      // a positional hash, not B.rng, so the rest of the layout is unchanged.
+      const gutted = kind === STORE.smashed || kind === STORE.barred;
+      const hv = Math.sin(pos.x * 12.9898 + pos.z * 78.233) * 43758.5453;
+      const key = kind === STORE.laundry ? 'storeLit' : gutted && hv - Math.floor(hv) < 0.5 ? 'storeGlow' : 'store';
+      B.batch.wall(key, pos.x, 0, pos.z, w, STORE_H, yaw, storeUV(kind), shade(color(0xffffff), 0.85 + rng() * 0.25));
     }
     fronts.push({ kind, x: pos.x, z: pos.z, w, yaw });
     // A shop name board over the sign band on about half of the generic units.
@@ -172,7 +178,29 @@ export function building(B, spec) {
     B.batch.box('rough', mat(cx, h - 0.35, cz), w + 0.3, 0.12, d + 0.3, shade(tint, 0.6), { ao: 0 });
   }
   if (spec.roof !== false) rooftop(B, b, h, rng, tint);
-  if (y0 > 0) B.batch.box('rough', mat(cx, y0, cz), w, 0.3, d, shade(tint, 0.4), { faces: FACE.ny, ao: 0, uvScale: 4 });
+  if (y0 > 0) {
+    B.batch.box('rough', mat(cx, y0, cz), w, 0.3, d, shade(tint, 0.4), { faces: FACE.ny, ao: 0, uvScale: 4 });
+    // A passage under the building (the civic arch): one caged lamp still burns near its far (north)
+    // mouth, so from the dark plaza the way on reads as a glowing doorway. Weak, and placed where
+    // the passage opens onto the next street, so it does not light whoever guards the near side.
+    // (Registered straight with the atmosphere rather than through B.light, which draws from the
+    // shared layout RNG and would reshuffle everything built after this.)
+    const atm = B.game?.atmosphere;
+    if (spec.passageLamp !== false && w < 12 && atm?.registerLightSource) {
+      const lz = z0 + Math.min(2.2, d * 0.2), ly = y0 - 0.75;
+      B.batch.box('metal', mat(cx, ly + 0.2, lz), 0.03, y0 - ly - 0.2, 0.03, COL.darkSteel, { ao: 0 });
+      B.batch.box('metal', mat(cx, ly - 0.02, lz), 0.3, 0.26, 0.3, COL.darkSteel, { ao: 0, faces: FACE.py });
+      B.batch.box('emissive', mat(cx, ly, lz), 0.16, 0.18, 0.16, color(0xffc88a), { ao: 0 });
+      const pos = new THREE.Vector3(cx, ly - 0.1, lz);
+      const handle = atm.registerLightSource({
+        pos, color: 0xffa95e, intensity: 22, distance: 11, flicker: 0.12, stealthRadius: 2.5, stealthWeight: 0.4,
+      });
+      B.glow?.add(pos, 0xffa95e, 0.7, 2.4);
+      // Listed with the level's other gameplay lights (the level map draws their stealth radius);
+      // not self-flickering, so the level never drives it.
+      B.level?.lights?.push({ handle, pos, base: 22, glow: -1, haloBase: 0, seed: 0, self: false, style: 'dying', onFlicker: null });
+    }
+  }
   if (spec.collider !== false) B.solid(cx, cz, w, d, h - y0, 0, { tag: 'building', y: y0 });
   return { h, fronts, tint };
 }

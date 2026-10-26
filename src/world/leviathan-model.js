@@ -452,7 +452,9 @@ export class LeviathanModel {
     this.jointPos = new Float32Array(jcount * 3);
     const jlight = new Float32Array(jcount * 3);
     const jrng = makeRng(4242);
-    const JL = [[1.6, 0.55], [1.0, 0.25], [1.4, 0.45]]; // knee, mid-shin, ankle: size (m), brightness
+    // knee, mid-shin, ankle: size (m), brightness. The knees ride ~150 m up: like warning lights on a
+    // mast they give the creature its scale from anywhere in the city.
+    const JL = [[2.3, 0.8], [1.0, 0.25], [1.4, 0.45]];
     for (let i = 0; i < jcount; i++) jlight.set([JL[i % 3][0], jrng() * TAU, JL[i % 3][1]], i * 3);
     jl.setAttribute('position', new THREE.BufferAttribute(this.jointPos, 3).setUsage(THREE.DynamicDrawUsage));
     jl.setAttribute('aLight', new THREE.BufferAttribute(jlight, 3));

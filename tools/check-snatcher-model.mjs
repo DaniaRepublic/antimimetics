@@ -234,6 +234,97 @@ console.log(JSON.stringify(grab));
 check(grab.distance > 0.3 && grab.distance < 0.6, `grab: face ${grab.distance.toFixed(2)} m from the eye at 1.0 m root distance`);
 check(Math.abs(grab.head[1] - 1.65) < 0.2, `grab: face height ${grab.head[1].toFixed(2)} m near eye height`);
 
+// --- death cam when the AI's root ends up too close (caught mid-stride): the visible body slides
+// back from the scene camera so the face still lands ~0.4 m away, not inside the near plane.
+const grabClose = await h.eval(() => {
+  const g = window.__game;
+  const V = g.camera.position.constructor;
+  g.setup([{ seed: 0, mode: 'grab', x: 0, z: 0, yaw: Math.PI }]);
+  const had = g.camera.parent;
+  g.scene.add(g.camera);
+  g.camera.position.set(0, 1.65, 0.52); // root 0.52 m away, in front of it (it faces +Z)
+  g.camera.updateMatrixWorld();
+  g.advance(1.5);
+  const head = g.models[0].model.headAnchor.getWorldPosition(new V());
+  const d = head.distanceTo(g.camera.position);
+  // and once it lets go, the body eases back onto its root
+  for (let i = 0; i < 120; i++) g.models[0].model.update(1 / 60, { mode: 'idle' });
+  const rig = g.models[0].model.root.children[0].position;
+  if (had) had.add(g.camera);
+  else g.scene.remove(g.camera);
+  return { d, rigBack: Math.hypot(rig.x, rig.z) };
+});
+console.log(JSON.stringify(grabClose));
+check(grabClose.d > 0.3 && grabClose.d < 0.6, `grab at 0.52 m root distance: face ${grabClose.d.toFixed(2)} m from the camera`);
+check(grabClose.rigBack < 0.05, `after the grab the body returns to its root (${grabClose.rigBack.toFixed(3)} m off)`);
+
+// --- respawn straight out of a grab (the root jumps back to its post): the body must snap onto
+// the root on that very update, not glide the grab offset back over the next second.
+const grabRespawn = await h.eval(() => {
+  const g = window.__game;
+  g.setup([{ seed: 1, mode: 'grab', x: 0, z: 0, yaw: Math.PI }]);
+  const had = g.camera.parent;
+  g.scene.add(g.camera);
+  g.camera.position.set(0, 1.65, 0.3);
+  g.camera.updateMatrixWorld();
+  g.advance(1.5);
+  const m = g.models[0].model;
+  const rig = m.root.children[0].position;
+  const during = Math.hypot(rig.x, rig.z);
+  m.root.position.set(25, 0, -40); // respawn: back at its post
+  m.root.updateMatrixWorld();
+  m.update(1 / 30, { mode: 'idle' });
+  const after = Math.hypot(rig.x, rig.z);
+  // a continuing grab is not mistaken for a teleport (the offset stays while it holds on)
+  m.root.position.set(0, 0, 0);
+  m.root.updateMatrixWorld();
+  for (let i = 0; i < 45; i++) m.update(1 / 30, { mode: 'grab' });
+  const held = Math.hypot(rig.x, rig.z);
+  if (had) had.add(g.camera);
+  else g.scene.remove(g.camera);
+  return { during, after, held };
+});
+console.log(JSON.stringify(grabRespawn));
+check(grabRespawn.during > 0.6 && grabRespawn.after === 0, `respawn out of a grab snaps the body onto its root (${grabRespawn.during.toFixed(2)} -> ${grabRespawn.after.toFixed(3)} m)`);
+check(grabRespawn.held > 0.6, `a held grab keeps its offset (${grabRespawn.held.toFixed(2)} m)`);
+
+// --- sleepers: anim.slump sits the figure down; easing it to 0 over 1.5 s gets it up again.
+const slump = await h.eval(() => {
+  const g = window.__game;
+  const V = g.camera.position.constructor;
+  g.setup([{ seed: 2, mode: 'idle', x: 0, z: 0, yaw: Math.PI }]);
+  const m = g.models[0].model;
+  const bone = (n) => m.mesh.skeleton.bones.find((b) => b.name === n);
+  const read = () => {
+    g.scene.updateMatrixWorld(true);
+    const hips = bone('hips').getWorldPosition(new V());
+    const head = m.headAnchor.getWorldPosition(new V());
+    const feet = ['footL', 'footR'].map((n) => bone(n).getWorldPosition(new V()));
+    const hands = ['fing2L', 'fing2R'].map((n) => bone(n).getWorldPosition(new V()));
+    return { hips: hips.y, head: head.y, feetMinY: Math.min(...feet.map((f) => f.y)), handsMinY: Math.min(...hands.map((f) => f.y)) };
+  };
+  for (let i = 0; i < 120; i++) m.update(1 / 60, { mode: 'idle', slump: 1 });
+  const seated = read();
+  let minHead = Infinity, maxHead = -Infinity, finite = true;
+  const track = [];
+  for (let i = 0; i <= 150; i++) {
+    m.update(1 / 60, { mode: 'idle', slump: Math.max(0, 1 - i / 90), headPitch: -0.3 });
+    const r = read();
+    finite = finite && Object.values(r).every(Number.isFinite);
+    if (i % 15 === 0) track.push(+r.head.toFixed(2));
+    minHead = Math.min(minHead, r.head);
+    maxHead = Math.max(maxHead, r.head);
+  }
+  const standing = read();
+  return { seated, standing, track, finite };
+});
+console.log(JSON.stringify(slump));
+check(slump.finite, 'slump: finite pose throughout the get-up');
+check(slump.seated.hips < 0.4 && slump.seated.head < 1.15, `slump 1: sat on the ground (hips ${slump.seated.hips.toFixed(2)} m, face ${slump.seated.head.toFixed(2)} m)`);
+check(slump.seated.feetMinY > -0.02 && slump.seated.handsMinY > -0.06, `slump 1: feet and fingertips not under the ground (${slump.seated.feetMinY.toFixed(2)}, ${slump.seated.handsMinY.toFixed(2)})`);
+check(slump.standing.head > 1.9 && slump.standing.hips > 0.95, `slump eased to 0: standing again (face ${slump.standing.head.toFixed(2)} m)`);
+check(slump.track.every((v, i) => i === 0 || v >= slump.track[i - 1] - 0.05), `get-up rises monotonically (${slump.track.join(' ')})`);
+
 // --- screenshots
 if (shots) {
   const set = async (defs, adv) => h.eval(([d, a]) => {

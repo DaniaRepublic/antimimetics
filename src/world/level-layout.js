@@ -244,7 +244,7 @@ export function buildCity(B) {
   // The lit laundromat (sentry post) — the only working shop light in the street.
   const mats = B.level.materials;
   B.light({
-    pos: { x: -13.2, y: 2.6, z: -90.3 }, color: 0xd6efe6, intensity: 75, distance: 17, stealthRadius: 9.5, stealthWeight: 0.95,
+    pos: { x: -13.2, y: 2.6, z: -90.3 }, color: 0xbfe8d0, intensity: 58, distance: 17, stealthRadius: 9.5, stealthWeight: 0.95,
     selfFlicker: true, flickerStyle: 'buzz', halo: { size: 1.6, intensity: 0.6 },
     onFlicker: (f) => {
       mats.storeLit.emissiveIntensity = 1.6 * f;
@@ -477,7 +477,7 @@ export function buildCity(B) {
     // The lamp is aimed at the chain: the registered source sits over the lit patch in front of
     // the gate (so whoever cuts the chain stands well inside its stealth radius); the halo stays
     // on the lamp head.
-    B.light({ pos: { x: 3.6, y: 4.4, z: -392.8 }, color: 0xe6eef4, intensity: 80, distance: 20, stealthRadius: 8.5, stealthWeight: 0.95, flicker: 0.05 });
+    B.light({ pos: { x: 3.6, y: 4.4, z: -392.8 }, color: 0xf0dcc2, intensity: 60, distance: 20, stealthRadius: 8.5, stealthWeight: 0.95, flicker: 0.05 });
     B.glow.add(new THREE.Vector3(x - 0.55, 4.95, z - 0.45), 0xe6eef4, 1.4, 2.4);
   }
   // Booth by the gate
@@ -600,7 +600,7 @@ export function buildCity(B) {
       { x: 70, z: 40 }, { x: 76, z: -60 }, { x: 64, z: -150 }, { x: 46, z: -214 }, { x: 0, z: -278 },
       { x: 38, z: -345 }, { x: 68, z: -420 }, { x: 88, z: -540 },
     ],
-    titleCamera: { pos: [-3.2, 1.7, -27.5], target: [14, 21, -105] },
+    titleCamera: { pos: [0.5, 1.25, -33], target: [-10.3, 25, -110] },
     exitZ: -430,
     routeRects: ROUTE_RECTS,
     footprints,
@@ -674,7 +674,7 @@ function pharmacy(B, footprints) {
   // A dropped flashlight just inside the door, still on: the lure from the street.
   b.geom('metal', cylX(0.03, 0.22, 8), mat(14.6, 0.04, -120.2, 0.9), color(0x2a2a2a));
   b.box('emissive', mat(14.6 - 0.09, 0.015, -120.2 + 0.07, 0.9), 0.02, 0.05, 0.05, color(0xfff6e0));
-  B.light({ pos: { x: 14.2, y: 0.25, z: -119.9 }, color: 0xf4ecd8, intensity: 9, distance: 7, stealthRadius: 2.5, stealthWeight: 0.4, flicker: 0.05, halo: { size: 0.25, intensity: 1.6 } });
+  B.light({ pos: { x: 14.2, y: 0.25, z: -119.9 }, color: 0xf4ecd8, intensity: 4.5, distance: 6, stealthRadius: 2.5, stealthWeight: 0.4, flicker: 0.05, halo: { size: 0.25, intensity: 1.6 } });
   B.decal('papers', 14, -119.5, 1.6, 1.6, 2.2);
   // Ceiling tubes: all dead but one, which is failing.
   for (const z of [-115, -123, -131]) for (const x of [16, 24]) b.box('emissive', mat(x, H - 0.25, z), 0.18, 0.05, 2.4, color(0x141616), { faces: FACE.ny });

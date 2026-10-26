@@ -75,6 +75,7 @@ uniform float uCall;
 uniform float uFrame;
 uniform float uHaze;
 uniform float uMistGlow;
+uniform float uGlowKnee;
 uniform vec2 uWind;
 uniform vec3 uMistLow;
 uniform vec3 uMistHigh;
@@ -139,13 +140,14 @@ void main() {
   // through a thin uniform haze over the whole visible ray, plus the mist bank density found at
   // the ray's closest approach to the light.
   float tS = min( sceneDist, 400.0 );
+  vec3 Lp = vec3( 0.0 );
   for ( int j = 0; j < 6; j ++ ) {
     vec4 lc = uLightCol[ j ];
     if ( lc.r + lc.g + lc.b < 1e-3 ) continue;
     vec3 oc = uLightPos[ j ] - uCamPos;
     float tc = dot( oc, rd );
     float h2 = max( dot( oc, oc ) - tc * tc, 0.0 );
-    float k = sqrt( h2 + 0.5 );
+    float k = sqrt( h2 + 2.0 ); // softened core: a ray grazing a lamp must not white out the room
     float Ih = ( atan( ( tS - tc ) / k ) + atan( tc / k ) ) / k;
     float sm = 0.0;
     float Im = 0.0;
@@ -160,8 +162,12 @@ void main() {
     float win = 1.0 - smoothstep( 0.4, 1.0, length( uLightPos[ j ] - pc ) / max( lc.w, 0.1 ) );
     float cosV = dot( oc, rd ) / max( length( oc ), 1e-3 );
     float phase = 0.84 / pow( 1.16 - 0.8 * cosV, 1.5 ); // Henyey-Greenstein, g = 0.4 (x 4 pi)
-    L += lc.rgb * ( phase * win * ( uHaze * Ih + uMistGlow * sm * Im * Tc ) );
+    Lp += lc.rgb * ( phase * win * ( uHaze * Ih + uMistGlow * sm * Im * Tc ) );
   }
+  // Soft knee on the lamps' glow: a halo may bloom, but standing next to a lamp in a mist bank
+  // (or in a small room with one) must not turn the whole frame into a white-out.
+  float peak = max( Lp.r, max( Lp.g, Lp.b ) );
+  L += Lp / ( 1.0 + uGlowKnee * peak );
   gl_FragColor = vec4( L, T );
 }
 `;
@@ -322,7 +328,8 @@ export class MistPass extends Pass {
       uCall: { value: 0 },
       uFrame: { value: 0 },
       uHaze: { value: 0.0006 }, // thin everywhere-haze that gives every lamp a glow
-      uMistGlow: { value: 0.4 }, // how strongly mist banks catch the lamps' light
+      uMistGlow: { value: 0.22 }, // how strongly mist banks catch the lamps' light (halos, not veils)
+      uGlowKnee: { value: 2.0 }, // compression of strong lamp in-scatter (see MARCH_FRAG)
       uWind: { value: new THREE.Vector2(0.32, 0.12) }, // m/s
       uMistLow: { value: colors.low },
       uMistHigh: { value: colors.high },

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FOG_TINT_GLSL, FOG_UNIFORMS } from './atmosphere-fog.js';
 
 // Cheap shader effects for the level, each a single draw call:
 //   GlowSprites  camera-facing additive halos (lamp bulbs, LEDs, pickup glints), per-sprite intensity
@@ -298,6 +299,7 @@ export class Smoke {
 export function skylineMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {
+      ...FOG_UNIFORMS, // the atmosphere's sky-matched haze (shared arrays; zeros without an atmosphere)
       uFogColor: { value: new THREE.Color(0x3a0d08) },
       uDensity: { value: 0.0035 },
       uBase: { value: new THREE.Color(0x0d0707) },
@@ -324,6 +326,7 @@ export function skylineMaterial() {
       varying vec3 vN;
       varying vec2 vShade;
       ${HASH}
+      ${FOG_TINT_GLSL}
       void main() {
         float dist = distance(vWorld, cameraPosition);
         vec3 col = uBase * (0.6 + vShade.x * 0.8);
@@ -340,10 +343,13 @@ export function skylineMaterial() {
         } else {
           col *= 0.7;
         }
-        // Height haze: tops catch more of the glow.
+        // Height haze: tops catch more of the glow. The haze is the sky's own colour in that
+        // direction, a shade darker, so the far blocks stand as silhouettes against the sky.
         float fog = min(uMaxFog, 1.0 - exp(-dist * uDensity));
         fog = max(fog, smoothstep(0.0, 160.0, vWorld.y) * 0.25);
-        gl_FragColor = vec4(mix(col, uFogColor, fog), 1.0);
+        vec3 haze = uFogColor;
+        if (atmoFogParams.x > 0.5) haze = atmoFogTint(normalize(vWorld - cameraPosition), uFogColor) * 0.82;
+        gl_FragColor = vec4(mix(col, haze, fog), 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,

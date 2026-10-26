@@ -522,11 +522,29 @@ function storefronts() {
         ctx.lineTo(sx, sy + 40 + rng() * 60);
         ctx.fill();
       }
+      if (kind !== STORE.pharmacy) {
+        // Glow mask (used only by the 'storeGlow' material: a work light still burning at the back
+        // of a few gutted shops). Deep and soft, cut by the fallen shelving, so whatever stands
+        // on the pavement in front of it is a silhouette.
+        const gg = glow.createRadialGradient(ox + ow * 0.42, oy + oh * 0.62, 6, ox + ow * 0.42, oy + oh * 0.62, ow * 0.62);
+        gg.addColorStop(0, '#d8d8d8');
+        gg.addColorStop(0.35, '#7a7a7a');
+        gg.addColorStop(1, '#141414');
+        glow.fillStyle = gg;
+        glow.fillRect(ox, oy, ow, oh);
+        glow.fillStyle = '#000';
+        glow.fillRect(ox + 20, oy + oh * 0.55, ow * 0.4, oh * 0.45);
+        glow.fillRect(ox + ow * 0.6, oy + oh * 0.3, ow * 0.25, oh * 0.7);
+      }
       if (kind === STORE.barred) {
         ctx.fillStyle = '#1b1b1b';
         for (let xx = ox; xx < ox + ow; xx += 22) ctx.fillRect(xx, oy, 5, oh);
         ctx.fillRect(ox, oy + oh * 0.3, ow, 6);
         ctx.fillRect(ox, oy + oh * 0.7, ow, 6);
+        glow.fillStyle = '#000';
+        for (let xx = ox; xx < ox + ow; xx += 22) glow.fillRect(xx, oy, 5, oh);
+        glow.fillRect(ox, oy + oh * 0.3, ow, 6);
+        glow.fillRect(ox, oy + oh * 0.7, ow, 6);
       } else if (kind === STORE.pharmacy) {
         // Burnt: soot blooms up the facade, half the letters gone.
         const sg = ctx.createLinearGradient(0, y0 + C, 0, y0);
@@ -887,10 +905,14 @@ function decals() {
       ctx.save();
       ctx.translate(x + 20 + rng() * (w - 40), y + 20 + rng() * (w - 40));
       ctx.rotate(rng() * Math.PI);
-      ctx.fillStyle = hsl(40, 10, 55 + rng() * 20, 0.85);
+      // rain-soaked and trodden: grey-brown, not white (pure white litter is the brightest thing
+      // in a dark street and pulls the eye away from what matters)
+      ctx.fillStyle = hsl(36, 12, 30 + rng() * 18, 0.85);
       ctx.fillRect(-14, -18, 28 + rng() * 10, 36);
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       for (let l = 0; l < 4; l++) ctx.fillRect(-10, -12 + l * 7, 18, 2);
+      ctx.fillStyle = 'rgba(30,22,16,0.35)';
+      ctx.fillRect(-14, 4 + rng() * 8, 28, 14); // wet, dirty half
       ctx.restore();
     }
   }
@@ -1176,12 +1198,25 @@ function signs() {
     g.addColorStop(1, '#a06a4a');
     ctx.fillStyle = g;
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = 'rgba(230,220,200,0.85)';
+    // A smiling commuter at a bus window... whose face has been scraped off the paper.
+    ctx.fillStyle = 'rgba(40,52,70,0.9)';
+    ctx.fillRect(x + 18, y + 52, w - 36, 150); // bus window
+    ctx.fillStyle = 'rgba(200,170,140,0.9)';
     ctx.beginPath();
-    ctx.arc(x + w / 2, y + 100, 46, 0, Math.PI * 2);
+    ctx.ellipse(x + w / 2, y + 112, 30, 38, 0, 0, Math.PI * 2); // head
     ctx.fill();
-    ctx.fillRect(x + w / 2 - 50, y + 150, 100, 90);
+    ctx.fillStyle = 'rgba(150,60,40,0.92)';
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + 205, 72, 58, 0, Math.PI, Math.PI * 2); // coat, shoulders
+    ctx.fill();
+    ctx.fillStyle = 'rgba(205,195,180,0.95)'; // bare paper where the face was torn away
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2 - 24, y + 96);
+    for (let k = 0; k <= 10; k++) ctx.lineTo(x + w / 2 - 24 + k * 4.8, y + 92 + (k % 2) * 7 + rng() * 4);
+    for (let k = 10; k >= 0; k--) ctx.lineTo(x + w / 2 - 24 + k * 4.8, y + 136 + (k % 2) * 6 + rng() * 4);
+    ctx.fill();
     signText(ctx, 'RIDE WITH US', x + 10, y + 30, w - 20, 26, '#f0e8d8');
+    signText(ctx, 'ASHFORD TRANSIT', x + 30, y + 226, w - 60, 16, 'rgba(240,232,216,0.8)');
     wear(SIGN.poster, 0.5);
   }
   // STOP

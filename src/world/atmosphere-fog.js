@@ -37,8 +37,8 @@ uniform vec4 atmoFogGlow;
 
 vec3 atmoFogTint( vec3 rd, vec3 horizon ) {
   float up = max( rd.y, 0.0 );
-  float band = exp( - up * 16.0 );
-  float mid = exp( - up * 3.2 );
+  float band = exp( - up * 13.0 );
+  float mid = exp( - up * 2.1 );
   vec3 c = atmoFogZenith + atmoFogMid * mid + ( horizon - atmoFogZenith - atmoFogMid ) * band;
   c *= 1.0 - 0.4 * smoothstep( 0.0, 0.7, - rd.y );
   vec2 flat2 = rd.xz / max( length( rd.xz ), 1e-4 );
@@ -99,6 +99,11 @@ const FRAGMENT = /* glsl */ `
     } else {
       fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
     }
+    #ifdef ATMO_FOG_SILHOUETTE
+      // Figures the player must track (the snatchers) take less of the fog at mid range, so they
+      // stay a darker shape in the mist than the street behind them; full fog again past ~75 m.
+      fogFactor *= mix( float( ATMO_FOG_SILHOUETTE ), 1.0, smoothstep( 35.0, 75.0, vFogDepth ) );
+    #endif
     gl_FragColor.rgb = mix( gl_FragColor.rgb, atmoFogCol, fogFactor );
   #else
     float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
