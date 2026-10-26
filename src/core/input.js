@@ -26,6 +26,8 @@ export class Input {
     this.enabled = true;
     this.lastX = 0;
     this.lastY = 0;
+    this.releaseRequested = false;
+    this.lockBlocked = false; // pointer lock can never work here (sandboxed frame): don't ask again
 
     window.addEventListener('keydown', (e) => {
       // Only swallow keys while playing, so menus keep arrow-key sliders and Tab focus.
@@ -73,33 +75,50 @@ export class Input {
         this.everLocked = true;
         this.pointerLockFailed = false;
       }
-      if (was && !this.locked) this.bus.emit('input:unlock');
-      if (!was && this.locked) this.bus.emit('input:lock');
+      // `requested`: the game released the lock itself (a menu opened). The exit lands
+      // asynchronously, possibly after the game has already resumed, so listeners must not treat
+      // it as the player pressing Esc.
+      if (was && !this.locked) {
+        const requested = this.releaseRequested;
+        this.releaseRequested = false;
+        this.bus.emit('input:unlock', { requested });
+      }
+      if (!was && this.locked) {
+        this.releaseRequested = false;
+        this.bus.emit('input:lock');
+      }
     });
     document.addEventListener('pointerlockerror', () => this.lockRefused());
   }
 
   // Must be called from a user gesture (click). Falls back silently.
   requestLock() {
-    if (this.locked) return;
+    if (this.locked || this.lockBlocked) return;
     try {
       const p = this.el.requestPointerLock?.();
-      if (p && typeof p.catch === 'function') p.catch(() => this.lockRefused());
-      else if (!this.el.requestPointerLock) this.lockRefused();
-    } catch {
-      this.lockRefused();
+      if (p && typeof p.catch === 'function') p.catch((err) => this.lockRefused(err));
+      else if (!this.el.requestPointerLock) this.lockRefused({ name: 'NotSupportedError' });
+    } catch (err) {
+      this.lockRefused(err);
     }
   }
 
   // A refusal after a successful lock is temporary (browsers refuse re-locking for ~1 s after
-  // Esc), so only switch to drag-to-look when the lock has never worked in this session.
-  lockRefused() {
-    if (!this.everLocked) this.pointerLockFailed = true;
+  // Esc), so only switch to drag-to-look when the lock has never worked in this session. A sandboxed
+  // iframe without allow-pointer-lock (or no API at all) is final: stop asking, since every refused
+  // request also prints an error in the console. (Other SecurityErrors, e.g. "the user has exited
+  // the lock before this request was completed", are transient.)
+  lockRefused(err) {
+    const sandboxed = err?.name === 'SecurityError' && /sandbox/i.test(String(err.message));
+    if (sandboxed || err?.name === 'NotSupportedError') this.lockBlocked = true;
+    if (!this.everLocked || this.lockBlocked) this.pointerLockFailed = true;
     this.bus.emit('input:lockfailed');
   }
 
   releaseLock() {
-    if (document.pointerLockElement) document.exitPointerLock?.();
+    if (!document.pointerLockElement) return;
+    this.releaseRequested = true;
+    document.exitPointerLock?.();
   }
 
   down(code) {
