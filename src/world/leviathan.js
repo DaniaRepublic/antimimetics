@@ -32,6 +32,9 @@ const TUNE = {
   tallRoof: 32, // prefer plant spots lower than this
   maskPeak: 0.6, // noise mask at the player from a close footfall
   maskTime: 0.8,
+  needleBox: 0.3, // collider width (m) around a needle planted in the street; 0 disables
+  needleBoxH: 2.2, // ...covering its lean up to about head height
+  maxNeedleBoxes: 600, // CollisionWorld cannot delete boxes; lifted feet only disable theirs
 };
 
 // Legs that must not be in the air at the same time (opposite leg, same-side neighbours).
@@ -50,6 +53,8 @@ const _q = new THREE.Vector3();
 const _pole = new THREE.Vector3();
 const _origin = new THREE.Vector3();
 const _v2 = new THREE.Vector2();
+const _rp = { x: 0, z: 0 };
+const _rt = { x: 0, z: 0 };
 
 function randIn(range, fallback) {
   const r = Array.isArray(range) ? range : fallback;
@@ -180,7 +185,10 @@ export class Leviathan {
       arc: 12,
       lag: 0,
       bias: rng() * 3,
+      collider: null, // CollisionWorld box while the needle stands in the street
+      boxPending: false,
     }));
+    this.needleBoxes = 0;
 
     this.routeSource = undefined;
     this.route = null;
@@ -244,6 +252,9 @@ export class Leviathan {
     const elev = clamp(pitch + halfFov * 0.4, 0.12, 1.2);
     const ideal = clamp((TUNE.height - tc.pos[1]) / Math.tan(elev), 200, 460);
     const p = { x: 0, z: 0 };
+    const world = this.game.world;
+    const eye = new THREE.Vector3(tc.pos[0], tc.pos[1], tc.pos[2]);
+    const body = new THREE.Vector3();
     let best = null, bestScore = Infinity;
     for (let s = 0; s <= route.length; s += 4) {
       route.pointAt(s, p);
@@ -252,7 +263,12 @@ export class Leviathan {
       if (d < 170 || d > 520) continue;
       const cos = (dx * fx + dz * fz) / d;
       if (cos < 0.93) continue;
-      const score = Math.abs(s - startS) * 0.3 + (1 - cos) * 900 + Math.abs(d - ideal) * 0.6;
+      let score = Math.abs(s - startS) * 0.3 + (1 - cos) * 900 + Math.abs(d - ideal) * 0.6;
+      // A building between the title camera and the body would hide the whole point of the shot.
+      if (world?.segmentBlocked && score - 600 < bestScore) {
+        body.set(p.x, TUNE.height - 6, p.z);
+        if (world.segmentBlocked(eye, body)) score += 600;
+      }
       if (score < bestScore) {
         bestScore = score;
         best = { x: p.x, z: p.z };
@@ -263,8 +279,8 @@ export class Leviathan {
     return best;
   }
 
-  // Jump to (x, z) facing yaw and plant every foot instantly.
-  placeAt(x, z, yaw) {
+  // Jump to (x, z) facing yaw and plant every foot instantly (clear of `avoid`, e.g. the spawn).
+  placeAt(x, z, yaw, avoid = this.game.player?.position) {
     this.ground.set(x, z);
     this.goal.set(x, z);
     this.vel.set(0, 0);
@@ -280,6 +296,7 @@ export class Leviathan {
       const stagger = (leg.index % 3 === 1 ? 1 : -1) * (leg.index % 2 ? 4 : -4);
       leg.foot.x += -Math.sin(yaw) * stagger;
       leg.foot.z += -Math.cos(yaw) * stagger;
+      if (avoid) this.avoidPoint(leg.foot, avoid);
       leg.foot.y = this.groundHeight(leg.foot.x, leg.foot.z);
       leg.to.copy(leg.foot);
       leg.goal.copy(leg.foot);
@@ -289,7 +306,10 @@ export class Leviathan {
     }
     this.bodyY = TUNE.height + (footY / this.legs.length) * TUNE.footHeightFollow;
     this.applyBodyTransform(0);
-    for (const leg of this.legs) this.poseLeg(leg);
+    for (const leg of this.legs) {
+      this.poseLeg(leg);
+      this.setNeedleBox(leg);
+    }
     this.commitLegs();
     this.updateHeadPosition();
   }
@@ -302,15 +322,17 @@ export class Leviathan {
     this.playerS = sP;
     const lz = this.zoneFor(cp)?.leviathan;
     const t = { x: 0, z: 0 };
+    // On respawn the player still stands where they died: keep the feet off the spawn point.
+    const avoid = cp?.pos ?? this.game.player?.position;
     if (lz?.calls === 'near' && lz.anchor) {
       route.tangentAt(route.project(lz.anchor.x, lz.anchor.z), t);
-      this.placeAt(lz.anchor.x, lz.anchor.z, dirToYaw(t.x, t.z));
+      this.placeAt(lz.anchor.x, lz.anchor.z, dirToYaw(t.x, t.z), avoid);
       return;
     }
     const s = clamp(sP + TUNE.lead, 0, route.length);
     const p = route.pointAt(s, { x: 0, z: 0 });
     route.tangentAt(s, t);
-    this.placeAt(p.x, p.z, dirToYaw(t.x, t.z));
+    this.placeAt(p.x, p.z, dirToYaw(t.x, t.z), avoid);
   }
 
   initialPlacement() {
@@ -361,14 +383,46 @@ export class Leviathan {
   // Push a ground point out of the player's personal space.
   avoidPlayer(p) {
     const pl = this.game.player?.position;
-    if (!pl) return false;
-    const dx = p.x - pl.x, dz = p.z - pl.z;
+    return pl ? this.avoidPoint(p, pl) : false;
+  }
+
+  avoidPoint(p, c) {
+    const dx = p.x - c.x, dz = p.z - c.z;
     const d = Math.hypot(dx, dz);
-    if (d >= TUNE.footClearance) return false;
+    if (!(d < TUNE.footClearance)) return false;
     const k = TUNE.footClearance / Math.max(d, 1e-3);
-    p.x = pl.x + (d < 1e-3 ? TUNE.footClearance : dx * k);
-    p.z = pl.z + (d < 1e-3 ? 0 : dz * k);
+    p.x = c.x + (d < 1e-3 ? TUNE.footClearance : dx * k);
+    p.z = c.z + (d < 1e-3 ? 0 : dz * k);
     return true;
+  }
+
+  // A needle standing in the street is solid: the player and snatchers walk around it rather
+  // than through it. Uses the public CollisionWorld API (addBox / setEnabled); boxes cannot be
+  // removed, so a lifted foot only disables its box. Rooftop plants need none. Call after
+  // poseLeg: the box follows the needle's lean over the bottom TUNE.needleBoxH metres.
+  setNeedleBox(leg) {
+    this.clearNeedleBox(leg);
+    leg.boxPending = false;
+    const world = this.game.world;
+    const f = leg.foot, a = leg.ankle;
+    const rise = a.y - f.y;
+    if (leg.swing || f.y > 0.3 || rise < 1 || TUNE.needleBox <= 0) return;
+    if (!world?.addBox || this.needleBoxes >= TUNE.maxNeedleBoxes) return;
+    const k = TUNE.needleBoxH / rise;
+    const ox = (a.x - f.x) * k, oz = (a.z - f.z) * k;
+    const off = Math.hypot(ox, oz);
+    this.needleBoxes++;
+    leg.collider = world.addBox({
+      x: f.x + ox / 2, z: f.z + oz / 2, y: f.y, h: TUNE.needleBoxH,
+      w: TUNE.needleBox + off, d: TUNE.needleBox, rot: off > 1e-4 ? Math.atan2(-oz, ox) : 0,
+      blocksMove: true, blocksSight: false, tag: 'leviathan-foot',
+    });
+  }
+
+  clearNeedleBox(leg) {
+    if (!leg.collider) return;
+    this.game.world?.setEnabled?.(leg.collider, false);
+    leg.collider = null;
   }
 
   // ------------------------------------------------------------------ update
@@ -391,7 +445,10 @@ export class Leviathan {
     this.updateGoal(dt);
     this.updateBody(dt);
     this.updateGait(dt);
-    for (const leg of this.legs) this.poseLeg(leg);
+    for (const leg of this.legs) {
+      this.poseLeg(leg);
+      if (leg.boxPending) this.setNeedleBox(leg);
+    }
     this.commitLegs();
     this.updateCall(dt);
     this.updateHead(dt);
@@ -428,8 +485,8 @@ export class Leviathan {
       this.playerS = Math.abs(sP - this.playerS) > 80 ? sP : damp(this.playerS, sP, 0.35, dt);
     }
     const s = clamp(this.playerS + TUNE.lead + Math.sin((t * TAU) / 83) * 14, 0, route.length);
-    const p = route.pointAt(s, { x: 0, z: 0 });
-    const tan = route.tangentAt(s, { x: 0, z: 0 });
+    const p = route.pointAt(s, _rp);
+    const tan = route.tangentAt(s, _rt);
     const side = Math.sin((t * TAU) / 61 + 1) * 7;
     this.goal.set(p.x - tan.z * side, p.z + tan.x * side);
   }
@@ -536,7 +593,8 @@ export class Leviathan {
         // Standing about, it still shifts its weight now and then (small settling steps).
         const threshold = this.time - this.lastLift > TUNE.restlessAfter ? 3 : TUNE.stepThreshold + leg.bias;
         if (leg.lag <= threshold || (best && leg.lag <= best.lag)) continue;
-        const blocked = this.legs.some((l) => l.swing && NEIGHBOURS[leg.index].includes(l.index));
+        let blocked = false;
+        for (const n of NEIGHBOURS[leg.index]) if (this.legs[n].swing) blocked = true;
         if (!blocked || leg.lag > TUNE.urgentLag + 8) best = leg;
       }
       if (best) {
@@ -558,6 +616,7 @@ export class Leviathan {
         leg.t = 0;
         leg.to.copy(leg.goal);
         leg.foot.copy(leg.goal);
+        leg.boxPending = true; // placed once the leg is posed this frame
         this.onFootfall(leg);
         continue;
       }
@@ -596,6 +655,8 @@ export class Leviathan {
     leg.arc = Math.max(clamp(10 + dist * 0.45, 11, 24), midY - Math.max(g.y, leg.from.y) + 8);
     leg.swing = true;
     leg.t = 0;
+    leg.boxPending = false;
+    this.clearNeedleBox(leg);
     this.lastLift = this.time;
   }
 

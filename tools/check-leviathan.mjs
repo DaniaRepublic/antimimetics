@@ -144,11 +144,28 @@ async function realGame() {
     const g = window.__game;
     const L = g.leviathan;
     const log = { foot: [], start: [], end: [] };
-    g.bus.on('leviathan:footfall', (e) => log.foot.push({ t: g.time, i: e.intensity, ok: !!e.pos?.isVector3 }));
+    let landMin = Infinity, jumped = -99; // teleports can put the player under a foot already landing
+    g.bus.on('leviathan:footfall', (e) => {
+      log.foot.push({ t: g.time, i: e.intensity, ok: !!e.pos?.isVector3 });
+      if (g.time - jumped > 1.5) landMin = Math.min(landMin, Math.hypot(e.pos.x - g.player.position.x, e.pos.z - g.player.position.z));
+    });
     g.bus.on('leviathan:call:start', (e) => log.start.push({ t: g.time, d: e.duration, ok: !!e.pos?.isVector3 }));
     g.bus.on('leviathan:call:end', (e) => log.end.push({ t: g.time, ok: !!e.pos?.isVector3 }));
     const level = g.level;
-    const zones = level.zones || [];
+    let zones = level.zones || [];
+    let injected = false;
+    if (!zones.some((z) => z.leviathan?.calls === 'near') && zones.length) {
+      // The foundation stub has no near zone. Add one at runtime (never in the stub file) so the
+      // near cadence, loitering and near respawn get exercised; the phases force currentZone.
+      const route = L.ensureRoute();
+      const a = route.pointAt(route.length * 0.3, { x: 0, z: 0 });
+      zones = level.zones = [
+        { ...zones[0], leviathan: { calls: 'calm' } },
+        { ...zones[0], id: 'near-test', index: zones.length, leviathan: { anchor: { x: a.x, z: a.z }, calls: 'near' } },
+      ];
+      zones[1].index = 1;
+      injected = true;
+    }
     const nearIdx = zones.findIndex((z) => z.leviathan?.calls === 'near');
     const calmIdx = zones.findIndex((z) => z.leviathan?.calls !== 'near');
     let maskInCall = 1, maskMaxOutside = 0, maskSamples = 0, maskAfterFall = [];
@@ -181,7 +198,10 @@ async function realGame() {
           const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
           p = g.nav?.nearestWalkable?.(cx, cz, 60) ?? { x: cx, z: cz };
         }
-        if (p) g.teleport(p.x, p.z);
+        if (p) {
+          g.teleport(p.x, p.z);
+          jumped = g.time;
+        }
       }
       const f0 = log.foot.length, s0 = log.start.length;
       const t0 = g.time;
@@ -205,10 +225,40 @@ async function realGame() {
     out.push(phase('near', nearIdx, 90));
     const distToAnchor = nearIdx >= 0 && zones[nearIdx].leviathan?.anchor
       ? Math.hypot(L.ground.x - zones[nearIdx].leviathan.anchor.x, L.ground.y - zones[nearIdx].leviathan.anchor.z) : null;
-    // respawn
+    // Needle colliders: one enabled box per foot planted in the street, none for lifted feet.
+    const boxes = g.world.colliders.filter((c) => c.tag === 'leviathan-foot');
+    const enabledBoxes = boxes.filter((c) => c.enabled).length;
+    const groundFeet = L.legs.filter((l) => !l.swing && l.foot.y <= 0.3).length;
+    // respawn (during a call if possible, to check it is cut cleanly)
+    if (!L.calling) {
+      L.callTimer = 0;
+      g.tick(1 / 30);
+    }
+    const ends0 = log.end.length;
     g.respawn();
-    const afterRespawn = { mask: g.noiseMask, calling: L.calling, body: L.position.toArray().map((v) => +v.toFixed(1)) };
+    const afterRespawn = {
+      mask: g.noiseMask, calling: L.calling, endedCall: log.end.length - ends0, body: L.position.toArray().map((v) => +v.toFixed(1)),
+    };
+    // respawn into the near zone: placed on its anchor, feet clear of the spawn, a call soon
+    let nearRespawn = null;
+    if (nearIdx >= 0) {
+      const z = zones[nearIdx];
+      const cp = level.checkpoints.find((c) => c.zone === nearIdx || c.zone === z.id)
+        ?? { id: 'near-test-cp', order: 99, pos: { x: z.leviathan.anchor.x - 20, z: z.leviathan.anchor.z + 30 }, yaw: 0, zone: nearIdx };
+      g.checkpoint = cp;
+      g.respawn();
+      level.currentZone = nearIdx;
+      const s0 = log.start.length, t0 = g.time;
+      const feetMin = Math.min(...L.legs.map((l) => Math.hypot(l.foot.x - cp.pos.x, l.foot.z - cp.pos.z)));
+      const anchorD = Math.hypot(L.ground.x - z.leviathan.anchor.x, L.ground.y - z.leviathan.anchor.z);
+      for (let i = 0; i < 12 * 30; i++) {
+        level.currentZone = nearIdx;
+        g.tick(1 / 30);
+      }
+      nearRespawn = { mode: L.mode, anchorD, feetMin, firstCall: log.start[s0] ? log.start[s0].t - t0 : null };
+    }
     return {
+      injected, enabledBoxes, groundFeet, boxes: boxes.length, landMin, nearRespawn,
       out, distToAnchor, afterRespawn, maskInCall, maskMaxOutside, maskAfterFall: maskAfterFall.slice(0, 5),
       intensities: log.foot.slice(0, 8).map((f) => +f.i.toFixed(2)), payloadsOk: [...log.foot, ...log.start, ...log.end].every((e) => e.ok),
       callDur: log.start[0]?.d, ends: log.end.length, starts: log.start.length, avgMs: ms / n, nearIdx, calmIdx,
@@ -223,18 +273,50 @@ async function realGame() {
   const calm = res.out[0];
   check(calm.footGapAvg >= 1.6 && calm.footGapAvg <= 4.5, `calm footfall cadence ${calm.footGapAvg}s`);
   check(calm.callGaps.every((g) => g >= 30), `calm call gaps ${calm.callGaps}`);
+  check(res.maskAfterFall.every((m) => m < 0.05), `footfall mask has decayed 0.85 s later (${res.maskAfterFall})`);
+  check(res.landMin >= 12.9, `no foot lands within 13 m of the player (min ${res.landMin.toFixed(1)} m)`);
+  check(res.enabledBoxes === res.groundFeet, `needle colliders: ${res.enabledBoxes} enabled for ${res.groundFeet} street feet (${res.boxes} made)`);
+  if (res.injected) console.log('note: stub level has no near zone; one was injected at runtime for these checks');
   if (res.nearIdx >= 0) {
     const near = res.out[1];
     check(near.mode === 'near', 'near zone -> near mode');
     check(near.calls >= 5 && near.callGaps.every((g) => g >= 9 && g <= 14), `near call gaps ${near.callGaps}`);
     check(res.distToAnchor !== null && res.distToAnchor < 40, `loiters at the anchor (${res.distToAnchor?.toFixed(1)} m)`);
-  } else console.log('note: level has no near zone; skipped near checks');
-  check(!res.afterRespawn.calling && res.afterRespawn.mask === 0, 'respawn clears call and mask');
+    const nr = res.nearRespawn;
+    check(nr.mode === 'near' && nr.anchorD < 1, `near respawn places it on the anchor (${nr.anchorD.toFixed(1)} m)`);
+    check(nr.feetMin >= 12.9, `near respawn keeps feet off the spawn (${nr.feetMin.toFixed(1)} m)`);
+    check(nr.firstCall !== null && nr.firstCall <= 9, `first call ${nr.firstCall?.toFixed(1)} s after a near respawn`);
+  } else console.log('note: level has no zones; skipped near checks');
+  check(!res.afterRespawn.calling && res.afterRespawn.mask === 0 && res.afterRespawn.endedCall === 1, 'respawn ends the call once and clears the mask');
   await h.page.waitForTimeout(800);
   await h.shot(`${OUT}/leviathan-game.png`);
   check(h.errors.length === 0, `game console errors: ${h.errors.length}`);
   if (h.errors.length) console.log(h.errors.join('\n'));
   await h.close();
+
+  // Title screen: it stands in the title camera's frame, stays alive, and never shakes the camera.
+  const t = await launch({ html: 'dist/index.html', query: 'god' });
+  const title = await t.eval(() => {
+    const g = window.__game;
+    const L = g.leviathan;
+    let foot = 0, calls = 0;
+    g.bus.on('leviathan:footfall', () => foot++);
+    g.bus.on('leviathan:call:start', () => calls++);
+    g.simulate(40);
+    g.render();
+    g.camera.updateMatrixWorld();
+    const ndc = L.position.clone().project(g.camera);
+    return { state: g.state, mode: L.mode, ndc: ndc.toArray(), trauma: g.player.trauma, foot, calls, mask: g.noiseMask };
+  });
+  console.log('title', JSON.stringify(title));
+  check(title.state === 'title' && title.mode === 'title', 'title state -> title mode');
+  check(Math.abs(title.ndc[0]) < 0.95 && Math.abs(title.ndc[1]) < 0.95 && title.ndc[2] < 1, `body is inside the title frame (ndc ${title.ndc.map((v) => v.toFixed(2))})`);
+  check(title.foot >= 8 && title.calls >= 1, `alive on the title screen (${title.foot} footfalls, ${title.calls} calls in 40 s)`);
+  check(title.trauma === 0, 'no camera shake on the title screen');
+  await t.shot(`${OUT}/leviathan-title.png`);
+  check(t.errors.length === 0, `title console errors: ${t.errors.length}`);
+  if (t.errors.length) console.log(t.errors.join('\n'));
+  await t.close();
 }
 
 if (only('--sandbox')) await sandbox();
