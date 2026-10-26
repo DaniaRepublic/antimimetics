@@ -9,7 +9,8 @@
 //
 // Options: iframe: 'allow-scripts' loads the game inside <iframe sandbox="allow-scripts"> (no
 // pointer lock, no storage) and h.page / h.eval then target that frame; settle: ms of real frames
-// to let render after boot (default 500); args: extra Chromium flags.
+// to let render after boot (default 500); args: extra Chromium flags; pointerLock: true lets the
+// game really lock the pointer (off by default: see below).
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -19,7 +20,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 
 export async function launch({
   html = 'dist/index.html', query = 'autostart', width = 1280, height = 720, timeout = 60000, iframe = null, settle = 500,
-  args = [],
+  args = [], pointerLock = false,
 } = {}) {
   const browser = await chromium.launch({
     args: [
@@ -32,6 +33,17 @@ export async function launch({
     ],
   });
   const top = await browser.newPage({ viewport: { width, height } });
+  // Headless Chromium grants pointer lock without a user gesture, and while it is held the
+  // renderer and browser processes grow by ~100+ MB per rendered frame until the OOM killer ends
+  // the run. Unless a test opts in (pointerLock: true), a lock request stays pending forever:
+  // input.locked and input.pointerLockFailed both stay false, as before the first click.
+  if (!pointerLock) {
+    await top.addInitScript(() => {
+      Element.prototype.requestPointerLock = function requestPointerLock() {
+        return new Promise(() => {});
+      };
+    });
+  }
   const errors = [];
   const logs = [];
   top.on('console', (msg) => {

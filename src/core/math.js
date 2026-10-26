@@ -53,14 +53,16 @@ export function makeRng(seed = 1) {
   return rng;
 }
 
-// Cheap 1D value noise for flicker / sway, deterministic in t.
+function hash1(n, seed) {
+  const x = Math.sin((n + seed * 57.13) * 127.1) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// Cheap 1D value noise for flicker / sway, deterministic in t. (Hot: the snatchers' capes call it
+// per particle per step, so no closure is allocated per call.)
 export function noise1(t, seed = 0) {
   const i = Math.floor(t);
   const f = t - i;
-  const h = (n) => {
-    const x = Math.sin((n + seed * 57.13) * 127.1) * 43758.5453;
-    return x - Math.floor(x);
-  };
   const u = f * f * (3 - 2 * f);
-  return lerp(h(i), h(i + 1), u);
+  return lerp(hash1(i, seed), hash1(i + 1, seed), u);
 }

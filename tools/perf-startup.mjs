@@ -18,12 +18,11 @@ if (!args.includes('--no-build')) execFileSync('node', ['build.mjs', '--no-minif
 
 // Map bundle line numbers to source modules.
 const lines = fs.readFileSync(html, 'utf8').split('\n');
-const scriptStart = lines.findIndex((l) => l.startsWith('<script>')) + 1;
 const marks = [];
 lines.forEach((l, i) => {
   // esbuild marks each module with its path relative to the cwd ("src/...", "../node_modules/...").
   const m = /^\s*\/\/ ((?:\.\.\/)*(?:src|node_modules)\/\S+\.m?js)\s*$/.exec(l);
-  if (m) marks.push({ line: i - scriptStart, mod: m[1].replace(/^(?:\.\.\/)*node_modules\/three\/.*/, 'three') });
+  if (m) marks.push({ line: i, mod: m[1].replace(/^(?:\.\.\/)*node_modules\/three\/.*/, 'three') });
 });
 const moduleAt = (line) => {
   let lo = 0, hi = marks.length - 1, best = '(bundle)';

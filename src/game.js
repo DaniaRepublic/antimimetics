@@ -168,8 +168,9 @@ export class Game {
     this.bus.on('level:checkpoint', (e) => this.setCheckpoint(e.checkpoint));
     this.bus.on('level:exit', () => this.win());
     this.bus.on('enemy:alert', () => this.stats.spotted++);
-    this.bus.on('input:unlock', () => {
-      if (this.state === 'playing') this.pause();
+    // Esc (the browser drops the lock) pauses; an exit the game asked for itself does not.
+    this.bus.on('input:unlock', (e) => {
+      if (this.state === 'playing' && !e?.requested) this.pause();
     });
     this.bus.on('input:key', ({ code }) => {
       if ((code === 'Escape' || code === 'KeyP') && this.state === 'playing' && !this.input.locked) this.pause();
