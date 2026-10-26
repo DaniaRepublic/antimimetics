@@ -438,7 +438,7 @@ const scenarios = [
         player: { x: 35, z: 0 },
       });
       const stats = {};
-      for (const s of g.director.snatchers) stats[s.id] = { legs: 0, frozen: 0, maxFrozen: 0, lastPhase: s.brain.phase, dist: 0, px: s.position.x, pz: s.position.z };
+      for (const s of g.director.snatchers) stats[s.id] = { legs: 0, frozen: 0, maxFrozen: 0, lastPhase: s.brain.phase, lastRoute: s.brain.routeIndex, dist: 0, px: s.position.x, pz: s.position.z };
       T.run(180, () => {
         for (const s of g.director.snatchers) {
           const st = stats[s.id];
@@ -446,8 +446,11 @@ const scenarios = [
           if (moving && s.actualSpeed < 0.1) st.frozen += 1 / 30;
           else st.frozen = 0;
           st.maxFrozen = Math.max(st.maxFrozen, st.frozen);
-          if (st.lastPhase === 'walk' && s.brain.phase === 'pause') st.legs++;
+          // A leg ends at a pause, or (patrols walk straight through gentle bends) when the
+          // route index moves on.
+          if (s.brain.route ? s.brain.routeIndex !== st.lastRoute : st.lastPhase === 'walk' && s.brain.phase === 'pause') st.legs++;
           st.lastPhase = s.brain.phase;
+          st.lastRoute = s.brain.routeIndex;
           st.dist += Math.hypot(s.position.x - st.px, s.position.z - st.pz);
           st.px = s.position.x;
           st.pz = s.position.z;

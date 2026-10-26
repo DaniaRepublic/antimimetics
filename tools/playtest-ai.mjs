@@ -92,9 +92,12 @@ for (const zone of zones) {
     let t = 0, nextBottle = 4, nextStep = 9, nextShout = 25, nextAlarm = 40, calls = 0, stimuli = 0;
     g.bus.on('leviathan:call:start', () => calls++);
     const alarm = g.level.alarms.find((a) => a.zone === zone);
+    let slowFrames = 0, frames = 0;
     const step = (active) => {
       g.tick(DT);
       t += DT;
+      frames++;
+      if (D.perf.lastMs > 8) slowFrames++;
       for (const s of mine) {
         const st = stat.get(s);
         if (Math.round(t / DT) % 150 === 0) {
@@ -174,9 +177,9 @@ for (const zone of zones) {
       out.push({ ...st, end: b.state, home, stuckEvents: s.stuckEvents, asleep: b.asleep, x: +s.position.x.toFixed(1), z: +s.position.z.toFixed(1) });
     }
     slow.sort((a, b) => parseFloat(b) - parseFloat(a));
-    return { slow: slow.slice(0, 8), nslow: slow.length, zone, wall, settleTime, calls, stimuli, paths: D.perf.paths, maxPathMs: +D.perf.maxPathMs.toFixed(1), meanPathMs: +(D.perf.pathMs / Math.max(1, D.perf.paths)).toFixed(2), maxDirMs: +D.perf.maxMs.toFixed(1), out };
+    return { slowFrames, frames, slow: slow.slice(0, 8), nslow: slow.length, zone, wall, settleTime, calls, stimuli, paths: D.perf.paths, maxPathMs: +D.perf.maxPathMs.toFixed(1), meanPathMs: +(D.perf.pathMs / Math.max(1, D.perf.paths)).toFixed(2), maxDirMs: +D.perf.maxMs.toFixed(1), out };
   }, [zone, minutes, settle, AREAS[zone]]);
-  console.log(`\nZ${zone}: ${minutes} min stirred, all calm ${r.settleTime.toFixed(0)} s later (${(r.wall / 1000).toFixed(0)} s wall), ${r.stimuli} bottles, ${r.calls} calls, ${r.paths} paths (mean ${r.meanPathMs} ms, max ${r.maxPathMs} ms), director max ${r.maxDirMs} ms/frame`);
+  console.log(`\nZ${zone}: ${minutes} min stirred, all calm ${r.settleTime.toFixed(0)} s later (${(r.wall / 1000).toFixed(0)} s wall), ${r.stimuli} bottles, ${r.calls} calls, ${r.paths} paths (mean ${r.meanPathMs} ms, max ${r.maxPathMs} ms), director max ${r.maxDirMs} ms/frame (${r.slowFrames} of ${r.frames} frames over 8 ms)`);
   if (r.nslow) console.log(`  path searches > 3 ms: ${r.nslow}\n    ` + r.slow.join('\n    '));
   for (const s of r.out) {
     const bad = s.maxStall > 3 || !/on (post|route)/.test(s.home);
