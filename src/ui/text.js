@@ -59,6 +59,18 @@ export const PAUSE = {
   sensitivity: 'mouse sensitivity',
   volume: 'volume',
   fov: 'field of view',
+  brightness: 'brightness',
+  relock: 'The browser held on to the mouse for a moment. Click resume again.',
+};
+
+// One-time brightness check on the first click of the title screen.
+export const CALIBRATE = {
+  tag: 'Before the tape starts',
+  title: 'Brightness',
+  body: 'Raise the brightness until the mark below is only just visible.',
+  aside: 'The dark is where you hide. Keep it dark, just not blind.',
+  hint: 'drag or use the arrow keys · Esc menu has this too',
+  go: 'continue',
 };
 
 export const ENDING = {

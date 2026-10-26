@@ -50,7 +50,7 @@ export function footfall(b, { intensity = 1 } = {}) {
   const I = clamp01(intensity);
   const end = t + 3.6;
   const out = b.gain(1);
-  const tone = b.filter('lowpass', 220 + 6000 * I * I, 0.5);
+  const tone = b.filter('lowpass', 420 + 5800 * I * I, 0.5);
   b.chain(out, tone, b.limiter(0.92));
 
   const sub = b.osc('sine', 55, t, end);
@@ -66,6 +66,15 @@ export function footfall(b, { intensity = 1 } = {}) {
   const bodyEnv = b.gain(0);
   perc(bodyEnv.gain, t, 1.0, 0.018, 0.5, end);
   b.chain(body, lp, bodyEnv, out);
+
+  // The thud: the mid-bass body of the impact (100-300 Hz), so that small speakers, which play
+  // nothing of the sub, still get hit, and the boom has a "where" even far away.
+  const thud = b.noise('pink', t, t + 1.4);
+  const tbp = b.filter('bandpass', 200, 1.1);
+  contour(tbp.frequency, [[t, 230], [t + 0.5, 120], [t + 1.4, 90]]);
+  const thudEnv = b.gain(0);
+  perc(thudEnv.gain, t, 0.9 * (0.45 + 0.55 * I), 0.005, 0.16, t + 1.4);
+  b.chain(thud, tbp, thudEnv, b.shaper(driveCurve(ctx, 1.8)), out);
 
   if (I > 0.2) {
     const crack = b.noise('white', t, t + 0.4);
