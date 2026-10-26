@@ -776,6 +776,78 @@ const scenarios = [
       };
     },
   },
+  {
+    n: 21,
+    name: 'pursuit cuts you off: a player walking across in front of a chaser is met, not trailed',
+    run: () => {
+      const T = window.__t;
+      const g = T.g;
+      // Chaser at the west wall; the player walks east across the street 9 m north of it.
+      T.setup({ enemies: [T.sentryDef('a', -8, -50, 0)], light: 0.8, player: { x: -6, z: -59, yaw: -Math.PI / 2 } });
+      const a = T.s('a');
+      T.run(4, () => a.state === 'chase');
+      const chasing = a.state === 'chase';
+      T.drive([{ x: 9, z: -59 }]);
+      // Where does it aim, relative to where the player is? Ahead (east) of them = intercept.
+      let lead = 0, n = 0;
+      const caught = T.run(6, () => {
+        if (a.state === 'chase' && a.goal) {
+          lead += a.goal.x - g.player.position.x;
+          n++;
+        }
+        return g.state !== 'playing';
+      });
+      const meanLead = n ? lead / n : 0;
+      return {
+        pass: chasing && meanLead > 0.8 && caught,
+        detail: `chasing ${chasing}; aims on average ${meanLead.toFixed(2)} m ahead of the player along their path; caught ${caught} (${g.state})`,
+      };
+    },
+  },
+  {
+    n: 22,
+    name: 'after a call, a chaser that sees you again resumes at once; one that does not, searches then gives up',
+    run: () => {
+      const T = window.__t;
+      const g = T.g;
+      T.setup({ enemies: [T.sentryDef('a', 0, -60), T.sentryDef('b', -6, -100, 0)], light: 0.8, player: { x: 0, z: -50 } });
+      const a = T.s('a');
+      T.run(4, () => a.state === 'chase');
+      const chasing = a.state === 'chase';
+      g.bus.emit('leviathan:call:start', { pos: { x: 80, y: 110, z: -100 }, duration: 4.6 });
+      T.run(0.5);
+      // Walk away during the call, still in plain view.
+      T.drive([{ x: 0, z: -35 }]);
+      T.run(3.5);
+      T.stop();
+      g.bus.emit('leviathan:call:end', {});
+      const tEnd = T.now();
+      let resumedAt = null;
+      T.run(3, (t) => {
+        if (a.state === 'chase' && resumedAt === null) resumedAt = t - tEnd;
+      });
+      const alerts = T.ev('enemy:alert', 'a').length;
+      // Part 2: the same, but hidden behind the parked car (x -3, z -25) when the call ends.
+      g.god = true;
+      T.setup({ enemies: [T.sentryDef('a', 0, -60), T.sentryDef('b', -6, -100, 0)], light: 0.8, player: { x: 0, z: -50 } });
+      const a2 = T.s('a');
+      T.run(4, () => a2.state === 'chase');
+      g.bus.emit('leviathan:call:start', { pos: { x: 80, y: 110, z: -100 }, duration: 4.6 });
+      T.run(0.5);
+      g.teleport(-3.2, -21.2, 0);
+      g.player.crouched = true;
+      T.run(4);
+      g.bus.emit('leviathan:call:end', {});
+      T.run(1.5);
+      const searching = a2.state === 'search';
+      const gaveUp = T.run(40, () => a2.state === 'return' || a2.state === 'idle');
+      g.god = false;
+      return {
+        pass: chasing && resumedAt !== null && resumedAt < 1.6 && alerts >= 2 && searching && gaveUp,
+        detail: `in view: chase resumed ${resumedAt?.toFixed(2)} s after the call (alerts ${alerts}); hidden: ${searching ? 'searched' : a2.state}, then ${gaveUp ? 'gave up' : 'still ' + a2.state}`,
+      };
+    },
+  },
 ];
 
 // quality=0 (cheapest atmosphere) unless screenshots are wanted: the AI never reads the render.

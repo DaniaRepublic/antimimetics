@@ -22,6 +22,7 @@ export function installBot([CFG, { fastModels = true } = {}]) {
   g.tick = () => {};
   g.render = () => {};
   // Stop the page's frame loop altogether (compositing an idle canvas still costs CPU headless).
+  window.__rAF = window.__rAF || window.requestAnimationFrame.bind(window);
   window.requestAnimationFrame = () => 0;
   // Skinned snatcher animation is ~80% of a headless tick and purely visual (the AI's eyes are
   // computed from the body, not the rig): skip it unless a test needs the real head position.
@@ -248,6 +249,8 @@ export function installBot([CFG, { fastModels = true } = {}]) {
         if (ds < 11) score -= (11 - ds) * 0.4; // inside its search circle
         score += Math.min(Math.hypot(dx, dz), 30) * 0.1 + away;
       });
+      // nowhere near the others either (a shriek is about to bring them)
+      for (const s of g.director.snatchers) if (s.active && !hunters.includes(s) && Math.hypot(x - s.position.x, z - s.position.z) < 9) score -= 3;
       // something tall right next to it to crouch behind
       const cover = g.world.query(x - 1.2, z - 1.2, x + 1.2, z + 1.2).some((c) => c.enabled && c.blocksSight && c.maxY >= 1.0 && c.minY < 0.5);
       if (cover) score += 1.5;
@@ -262,7 +265,9 @@ export function installBot([CFG, { fastModels = true } = {}]) {
           len += Math.hypot(q.x - px, q.z - pz);
           px = q.x;
           pz = q.z;
-          for (const s of hunters) if (Math.hypot(q.x - s.position.x, q.z - s.position.z) < 4) nearHunter = true;
+          for (const s of g.director.snatchers) {
+            if (s.active && Math.hypot(q.x - s.position.x, q.z - s.position.z) < (hunters.includes(s) ? 4 : 6)) nearHunter = true;
+          }
         }
         if (nearHunter || len > r * 1.5 + 3) continue;
         best = { x, z, score };

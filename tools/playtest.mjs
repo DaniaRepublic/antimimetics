@@ -3,12 +3,22 @@
 // prints a pass/fail table per zone x policy.
 //
 //   node build.mjs && node tools/playtest.mjs [--zones 1,2] [--policies intended,careless]
-//        [--runs 5] [--offsets 0,7,13,21,29] [--trace] [--log] [--json out.json]
+//        [--runs 5] [--offsets 0,7,13,21,29] [--trace] [--log] [--perf] [--json out.json]
+//        [--full-models]
 //
 // Every run starts with an ordinary respawn at the zone's checkpoint (no teleporting during a
-// run), waits a varied offset, then follows the policy. Expectations: 'intended' must reach the
-// next checkpoint (Z4: the exit) in >= 4/5 runs; careless policies should mostly fail (caught,
-// or at least spotted and chased) in Z1-Z4.
+// run), waits a varied offset, then follows the policy. Expectations: 'intended' (and Z4 'gate'
+// / 'garage') must reach the next checkpoint (Z4: the exit) in >= 4/5 runs; careless policies
+// should mostly fail (caught, or at least spotted and chased) in Z1-Z4; 'escape' (get spotted,
+// sprint, break line of sight, hide) should usually survive. A checkpoint only counts once
+// nobody is chasing (src/world/level.js), so dragging a pack over the line is not a success.
+// Runs are ~50-100x real time (the snatchers' skinned animation is skipped unless
+// --full-models); the whole table takes ~20-30 min on a busy machine.
+//
+// Related tools: playtest-map.mjs (top-down tactical maps, --exposure heatmap, --trace overlay),
+// playtest-ai.mjs (AI soak in the real level: stalls, paths, everyone goes home),
+// playtest-flow.mjs (death cam, respawn restores everything, checkpoints, exit, alarm throws),
+// playtest-deathcam.mjs (screenshots of the grab).
 import { launch } from './harness.mjs';
 import { installBot } from './playtest-bot.mjs';
 import { installPolicies } from './playtest-policies.mjs';
