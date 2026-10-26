@@ -160,7 +160,8 @@ function strut(b, key, M, x, u1, y1, u2, y2, w, color) {
 export function car(B, o) {
   const { x, z, yaw = 0, type = 'sedan', burnt = false, door = false, roll = 0, fire = false, police = false, alarm = null, sink = 0 } = o;
   const T = CAR[type];
-  const paint = burnt ? mix(COL.char, COL.rust, 0.12 + B.rng() * 0.4) : o.color || B.rng.pick(CAR_PAINT);
+  // burnt: rust-brown shell, not black (the wrecks are cover; their shape must read in the dark)
+  const paint = burnt ? mix(COL.char, COL.rust, 0.3 + B.rng() * 0.4) : o.color || B.rng.pick(CAR_PAINT);
   const drop = burnt ? 0.12 : 0;
   let M;
   if (roll === 1) M = mat(x, T.roof - drop, z, yaw, 0, Math.PI);
@@ -214,7 +215,7 @@ export function car(B, o) {
       strut(b, 'rough', M, sx * (Wg / 2 - 0.03), G[1][0], G[1][1], G[2][0], G[2][1] - 0.06, 0.06, paint);
       strut(b, 'rough', M, sx * (Wg / 2 - 0.03), G[0][0], G[0][1], G[3][0], G[3][1] - 0.06, 0.06, paint);
     }
-    b.box('rough', sub(M, 0, G[2][1] - 0.1, -(G[2][0] + G[3][0]) / 2, 0, 0.06), Wg, 0.05, G[2][0] - G[3][0] + 0.1, paint, { ao: 0 });
+    b.box('rough', sub(M, 0, G[2][1] - 0.1, -(G[2][0] + G[3][0]) / 2, 0, 0.06), Wg, 0.05, G[2][0] - G[3][0] + 0.1, mix(paint, C(0x6a645c), 0.45), { ao: 0 }); // ash-grey sagging roof
   } else {
     b.geom('glass', profileGeo(`car-${type}-green`, G, Wg, 0.02), M, COL.glass);
     b.box('paint', sub(M, 0, G[2][1] - 0.02, -(G[2][0] + G[3][0]) / 2), Wg + 0.04, 0.06, G[2][0] - G[3][0] + 0.12, paint, { ao: 0 });
@@ -322,7 +323,7 @@ function busSection(B, M, L, paint, burnt, front) {
 
 // Articulated bus jack-knifed at `fold` radians, or a single bus (rear omitted).
 export function bus(B, { x, z, yaw = 0, fold = 0, burnt = false, articulated = true }) {
-  const paint = burnt ? mix(COL.char, COL.rust, 0.42) : C(0xb8ad96);
+  const paint = burnt ? mix(COL.char, COL.rust, 0.55) : C(0xb8ad96);
   const Lf = 11.5, Lr = 7;
   const M = mat(x, burnt ? -0.15 : 0, z, yaw);
   busSection(B, M, Lf, paint, burnt, true);

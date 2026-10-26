@@ -668,7 +668,7 @@ function pharmacy(B, footprints) {
   // A dropped flashlight just inside the door, still on: the lure from the street.
   b.geom('metal', cylX(0.03, 0.22, 8), mat(14.6, 0.04, -120.2, 0.9), color(0x2a2a2a));
   b.box('emissive', mat(14.6 - 0.09, 0.015, -120.2 + 0.07, 0.9), 0.02, 0.05, 0.05, color(0xfff6e0));
-  B.light({ pos: { x: 14.2, y: 0.25, z: -119.9 }, color: 0xf4ecd8, intensity: 9, distance: 7, stealthRadius: 2.5, stealthWeight: 0.4, flicker: 0.05, halo: { size: 0.25, intensity: 1.6 } });
+  B.light({ pos: { x: 14.2, y: 0.25, z: -119.9 }, color: 0xf4ecd8, intensity: 4.5, distance: 6, stealthRadius: 2.5, stealthWeight: 0.4, flicker: 0.05, halo: { size: 0.25, intensity: 1.6 } });
   B.decal('papers', 14, -119.5, 1.6, 1.6, 2.2);
   // Ceiling tubes: all dead but one, which is failing.
   for (const z of [-115, -123, -131]) for (const x of [16, 24]) b.box('emissive', mat(x, H - 0.25, z), 0.18, 0.05, 2.4, color(0x141616), { faces: FACE.ny });
