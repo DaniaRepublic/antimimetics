@@ -21,11 +21,12 @@ function facadeMaterial(tex, panes) {
   });
   m.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec2 aLit;\nvarying vec2 vLit;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLit = aLit;');
+      .replace('#include <common>', '#include <common>\nattribute vec2 aLit;\nvarying vec2 vLit;\nvarying float vLitY;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLit = aLit;\nvLitY = position.y;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec2 vLit;
+varying float vLitY;
 float litHash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }`)
       .replace('#include <emissivemap_fragment>', `
 #ifdef USE_EMISSIVEMAP
@@ -34,7 +35,8 @@ float litHash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.
   vec2 cellId = floor( vEmissiveMapUv * vec2( ${FACADE_CELLS * panes}.0, ${FACADE_CELLS}.0 ) ) + floor( vLit.x + 0.5 );
   float h1 = litHash( cellId );
   float h2 = litHash( cellId.yx + 17.0 );
-  float lit = step( h1, vLit.y );
+  // (never at street level: a glowing pane at arm's length reads as a flat lit panel, not a room)
+  float lit = step( h1, vLit.y ) * step( 3.2, vLitY );
   vec3 tint = mix( vec3( 1.0, 0.46, 0.17 ), vec3( 0.9, 0.08, 0.03 ), step( 0.72, h2 ) );
   tint *= 0.25 + 0.6 * h2;
   totalEmissiveRadiance = emissiveColor.rgb * tint * lit;
@@ -52,7 +54,7 @@ export function createLevelMaterials(T) {
     facade_concrete: facadeMaterial(T.facade.concrete, 3),
     facade_stone: facadeMaterial(T.facade.stone, 1),
     store: std({ map: T.store.map, emissiveMap: T.store.glow, emissive: 0xffffff, emissiveIntensity: 0.0, roughness: 0.75, metalness: 0.05 }),
-    storeLit: std({ map: T.store.map, emissiveMap: T.store.glow, emissive: 0xd8efe6, emissiveIntensity: 1.6, roughness: 0.6, metalness: 0.05 }),
+    storeLit: std({ map: T.store.map, emissiveMap: T.store.glow, emissive: 0x8fb8a8, emissiveIntensity: 1.6, roughness: 0.6, metalness: 0.05 }),
     road: std({ map: T.road, roughness: 0.82, metalness: 0.0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }),
     asphalt: std({ map: T.asphalt, roughness: 0.88, metalness: 0.0 }),
     paving: std({ map: T.paving, roughness: 0.9 }),

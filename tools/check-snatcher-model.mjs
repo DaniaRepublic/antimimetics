@@ -234,6 +234,43 @@ console.log(JSON.stringify(grab));
 check(grab.distance > 0.3 && grab.distance < 0.6, `grab: face ${grab.distance.toFixed(2)} m from the eye at 1.0 m root distance`);
 check(Math.abs(grab.head[1] - 1.65) < 0.2, `grab: face height ${grab.head[1].toFixed(2)} m near eye height`);
 
+// --- sleepers: anim.slump sits the figure down; easing it to 0 over 1.5 s gets it up again.
+const slump = await h.eval(() => {
+  const g = window.__game;
+  const V = g.camera.position.constructor;
+  g.setup([{ seed: 2, mode: 'idle', x: 0, z: 0, yaw: Math.PI }]);
+  const m = g.models[0].model;
+  const bone = (n) => m.mesh.skeleton.bones.find((b) => b.name === n);
+  const read = () => {
+    g.scene.updateMatrixWorld(true);
+    const hips = bone('hips').getWorldPosition(new V());
+    const head = m.headAnchor.getWorldPosition(new V());
+    const feet = ['footL', 'footR'].map((n) => bone(n).getWorldPosition(new V()));
+    const hands = ['fing2L', 'fing2R'].map((n) => bone(n).getWorldPosition(new V()));
+    return { hips: hips.y, head: head.y, feetMinY: Math.min(...feet.map((f) => f.y)), handsMinY: Math.min(...hands.map((f) => f.y)) };
+  };
+  for (let i = 0; i < 120; i++) m.update(1 / 60, { mode: 'idle', slump: 1 });
+  const seated = read();
+  let minHead = Infinity, maxHead = -Infinity, finite = true;
+  const track = [];
+  for (let i = 0; i <= 150; i++) {
+    m.update(1 / 60, { mode: 'idle', slump: Math.max(0, 1 - i / 90), headPitch: -0.3 });
+    const r = read();
+    finite = finite && Object.values(r).every(Number.isFinite);
+    if (i % 15 === 0) track.push(+r.head.toFixed(2));
+    minHead = Math.min(minHead, r.head);
+    maxHead = Math.max(maxHead, r.head);
+  }
+  const standing = read();
+  return { seated, standing, track, finite };
+});
+console.log(JSON.stringify(slump));
+check(slump.finite, 'slump: finite pose throughout the get-up');
+check(slump.seated.hips < 0.4 && slump.seated.head < 1.15, `slump 1: sat on the ground (hips ${slump.seated.hips.toFixed(2)} m, face ${slump.seated.head.toFixed(2)} m)`);
+check(slump.seated.feetMinY > -0.02 && slump.seated.handsMinY > -0.06, `slump 1: feet and fingertips not under the ground (${slump.seated.feetMinY.toFixed(2)}, ${slump.seated.handsMinY.toFixed(2)})`);
+check(slump.standing.head > 1.9 && slump.standing.hips > 0.95, `slump eased to 0: standing again (face ${slump.standing.head.toFixed(2)} m)`);
+check(slump.track.every((v, i) => i === 0 || v >= slump.track[i - 1] - 0.05), `get-up rises monotonically (${slump.track.join(' ')})`);
+
 // --- screenshots
 if (shots) {
   const set = async (defs, adv) => h.eval(([d, a]) => {

@@ -139,6 +139,7 @@ void main() {
   // through a thin uniform haze over the whole visible ray, plus the mist bank density found at
   // the ray's closest approach to the light.
   float tS = min( sceneDist, 400.0 );
+  vec3 Lp = vec3( 0.0 );
   for ( int j = 0; j < 6; j ++ ) {
     vec4 lc = uLightCol[ j ];
     if ( lc.r + lc.g + lc.b < 1e-3 ) continue;
@@ -160,8 +161,12 @@ void main() {
     float win = 1.0 - smoothstep( 0.4, 1.0, length( uLightPos[ j ] - pc ) / max( lc.w, 0.1 ) );
     float cosV = dot( oc, rd ) / max( length( oc ), 1e-3 );
     float phase = 0.84 / pow( 1.16 - 0.8 * cosV, 1.5 ); // Henyey-Greenstein, g = 0.4 (x 4 pi)
-    L += lc.rgb * ( phase * win * ( uHaze * Ih + uMistGlow * sm * Im * Tc ) );
+    Lp += lc.rgb * ( phase * win * ( uHaze * Ih + uMistGlow * sm * Im * Tc ) );
   }
+  // Soft knee on the lamps' glow: a halo may bloom, but standing next to a lamp in a mist bank
+  // must not turn the whole frame into a white-out.
+  float peak = max( Lp.r, max( Lp.g, Lp.b ) );
+  L += Lp / ( 1.0 + 0.7 * peak );
   gl_FragColor = vec4( L, T );
 }
 `;

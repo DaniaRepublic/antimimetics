@@ -243,7 +243,7 @@ export function buildCity(B) {
   // The lit laundromat (sentry post) — the only working shop light in the street.
   const mats = B.level.materials;
   B.light({
-    pos: { x: -13.2, y: 2.6, z: -90.3 }, color: 0xd6efe6, intensity: 75, distance: 17, stealthRadius: 9.5, stealthWeight: 0.95,
+    pos: { x: -13.2, y: 2.6, z: -90.3 }, color: 0xbfe8d0, intensity: 58, distance: 17, stealthRadius: 9.5, stealthWeight: 0.95,
     selfFlicker: true, flickerStyle: 'buzz', halo: { size: 1.6, intensity: 0.6 },
     onFlicker: (f) => {
       mats.storeLit.emissiveIntensity = 1.6 * f;
@@ -471,7 +471,7 @@ export function buildCity(B) {
     // The lamp is aimed at the chain: the registered source sits over the lit patch in front of
     // the gate (so whoever cuts the chain stands well inside its stealth radius); the halo stays
     // on the lamp head.
-    B.light({ pos: { x: 3.6, y: 4.4, z: -392.8 }, color: 0xe6eef4, intensity: 80, distance: 20, stealthRadius: 8.5, stealthWeight: 0.95, flicker: 0.05 });
+    B.light({ pos: { x: 3.6, y: 4.4, z: -392.8 }, color: 0xf0dcc2, intensity: 60, distance: 20, stealthRadius: 8.5, stealthWeight: 0.95, flicker: 0.05 });
     B.glow.add(new THREE.Vector3(x - 0.55, 4.95, z - 0.45), 0xe6eef4, 1.4, 2.4);
   }
   // Booth by the gate
@@ -594,7 +594,7 @@ export function buildCity(B) {
       { x: 70, z: 40 }, { x: 76, z: -60 }, { x: 64, z: -150 }, { x: 46, z: -214 }, { x: 0, z: -278 },
       { x: 38, z: -345 }, { x: 68, z: -420 }, { x: 88, z: -540 },
     ],
-    titleCamera: { pos: [-3.2, 1.7, -27.5], target: [14, 21, -105] },
+    titleCamera: { pos: [0.5, 1.25, -33], target: [-10.3, 25, -110] },
     exitZ: -430,
     routeRects: ROUTE_RECTS,
     footprints,

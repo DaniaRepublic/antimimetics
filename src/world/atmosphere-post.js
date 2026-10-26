@@ -1,13 +1,12 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { ScenePass, MistPass } from './atmosphere-mist.js';
 
-// Final look, in display space (runs after OutputPass has tone-mapped to sRGB): lens distortion
-// for the death sequence, chromatic aberration, a maroon/amber colour grade, threat-driven vignette
-// and heartbeat pulse, animated film grain.
+// Final pass: tone mapping (ACES, as three's OutputPass would do: merged here to save a full-screen
+// pass), then the look in display space: lens distortion for the death sequence, chromatic
+// aberration, a maroon/amber colour grade, threat-driven vignette and heartbeat pulse, film grain.
 export const GradeShader = {
   name: 'AtmosphereGrade',
   uniforms: {
@@ -21,6 +20,7 @@ export const GradeShader = {
     uGrain: { value: 0.045 },
     uAberration: { value: 0.0016 },
     uGamma: { value: 1 }, // display gamma from the optional brightness setting (1 = as graded)
+    toneMappingExposure: { value: 1 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -41,6 +41,12 @@ export const GradeShader = {
     uniform float uAberration;
     uniform float uGamma;
     varying vec2 vUv;
+
+    #include <tonemapping_pars_fragment>
+
+    vec3 toDisplay( vec3 hdr ) {
+      return sRGBTransferOETF( vec4( ACESFilmicToneMapping( hdr ), 1.0 ) ).rgb;
+    }
 
     float hash12( vec2 p ) {
       vec3 p3 = fract( vec3( p.xyx ) * 0.1031 );
@@ -76,10 +82,12 @@ export const GradeShader = {
       col.r = texture2D( tDiffuse, uv + dir * ab ).r;
       col.g = texture2D( tDiffuse, uv ).g;
       col.b = texture2D( tDiffuse, uv - dir * ab * 1.2 ).b;
+      col = toDisplay( col );
 
       // --- grade: maroon shadows, amber highlights, gentle S-curve, muted non-reds
       float l = dot( col, vec3( 0.2126, 0.7152, 0.0722 ) );
-      col += vec3( 0.03, 0.0, 0.006 ) * ( 1.0 - smoothstep( 0.0, 0.22, l ) );
+      // shadows lift to a dark maroon (never crushed to pure black, so cover and shapes stay legible)
+      col += vec3( 0.034, 0.008, 0.01 ) * ( 1.0 - smoothstep( 0.0, 0.2, l ) );
       col = mix( col, col * vec3( 1.06, 0.95, 0.84 ), smoothstep( 0.3, 0.85, l ) );
       col = mix( col, col * col * ( 3.0 - 2.0 * col ), 0.3 );
       float l2 = dot( col, vec3( 0.2126, 0.7152, 0.0722 ) );
@@ -95,10 +103,13 @@ export const GradeShader = {
       col *= mix( vec3( 0.2, 0.11, 0.1 ), vec3( 1.0 ), vig );
       col += vec3( 0.2, 0.0, 0.015 ) * uThreat * ( 0.3 + 0.7 * uBeat ) * smoothstep( 0.4, 1.0, r );
 
-      // --- caught: bleed to red monochrome, then to black
+      // --- caught: a hard flash as it takes hold, a second of its face in full colour, then the
+      // image bleeds to red monochrome and goes to black
       float dl = dot( col, vec3( 0.3, 0.59, 0.11 ) );
-      col = mix( col, vec3( dl * 1.5, dl * 0.1, dl * 0.07 ), smoothstep( 0.05, 0.6, uDeath ) );
-      col *= 1.0 - smoothstep( 0.55, 1.0, uDeath );
+      float flash = smoothstep( 0.0, 0.02, uDeath ) * ( 1.0 - smoothstep( 0.02, 0.13, uDeath ) );
+      col = mix( col, vec3( dl ) * vec3( 1.5, 1.15, 1.05 ), 0.6 * flash ) * ( 1.0 + 0.9 * flash );
+      col = mix( col, vec3( dl * 1.5, dl * 0.1, dl * 0.07 ), smoothstep( 0.4, 0.78, uDeath ) );
+      col *= 1.0 - smoothstep( 0.68, 1.0, uDeath );
 
       // --- grain (triangular, luminance weighted; also dithers the dark gradients)
       vec2 gp = gl_FragCoord.xy + fract( uTime * 13.17 ) * vec2( 431.0, 197.0 );
@@ -111,7 +122,7 @@ export const GradeShader = {
   `,
 };
 
-// Scene (+ depth texture) -> volumetric mist -> bloom (reduced res) -> tone map -> grade.
+// Scene (+ depth texture) -> volumetric mist -> bloom (reduced res) -> tone map + grade.
 export function createPost({ renderer, scene, camera, noise, lights, mistColors }) {
   const pr = renderer.getPixelRatio();
   const size = renderer.getSize(new THREE.Vector2());
@@ -128,14 +139,14 @@ export function createPost({ renderer, scene, camera, noise, lights, mistColors 
   // Bloom at half the composer resolution (the pass itself already halves again internally).
   const bloomSetSize = bloom.setSize.bind(bloom);
   bloom.setSize = (w, h) => bloomSetSize(Math.max(2, Math.round(w * 0.5)), Math.max(2, Math.round(h * 0.5)));
-  const output = new OutputPass();
   const grade = new ShaderPass(GradeShader);
+  // Tone mapping happens inside the grade (see GradeShader); three must not add its own.
+  grade.material.toneMapped = false;
   composer.addPass(scenePass);
   composer.addPass(mistPass);
   composer.addPass(bloom);
-  composer.addPass(output);
   composer.addPass(grade);
   composer.setPixelRatio(pr);
   composer.setSize(size.x, size.y);
-  return { composer, scenePass, mistPass, bloom, output, grade };
+  return { composer, scenePass, mistPass, bloom, grade };
 }

@@ -14,17 +14,17 @@ const rgb = (r, g, b) => new THREE.Color().setRGB(r, g, b); // linear working sp
 const LOOK = {
   horizon: rgb(0.21, 0.035, 0.019), // fog colour where the sky meets the streets
   zenith: rgb(0.0045, 0.001, 0.0012),
-  mid: rgb(0.045, 0.0058, 0.0045),
+  mid: rgb(0.105, 0.0145, 0.0098),
   glowStrength: 0.85,
   glowDir: new THREE.Vector3(-0.6, 0.0, -0.8).normalize(),
   sunDir: new THREE.Vector3(-0.6, 0.15, -0.79).normalize(),
   sun: rgb(0.5, 0.085, 0.024),
   skyGlow: rgb(0.55, 0.1, 0.035),
-  cloudLow: rgb(0.26, 0.048, 0.024),
-  cloudHigh: rgb(0.032, 0.0075, 0.0062),
-  hemiSky: rgb(1.0, 0.26, 0.15),
-  hemiGround: rgb(0.06, 0.018, 0.014),
-  hemiIntensity: 1.5,
+  cloudLow: rgb(0.26, 0.046, 0.022),
+  cloudHigh: rgb(0.085, 0.017, 0.013),
+  hemiSky: rgb(1.0, 0.31, 0.19),
+  hemiGround: rgb(0.1, 0.03, 0.022),
+  hemiIntensity: 1.85,
   dirColor: rgb(1.0, 0.36, 0.16),
   dirIntensity: 0.7,
   mistLow: rgb(0.05, 0.0095, 0.0065),
@@ -324,6 +324,7 @@ export class Atmosphere {
     gu.uBeat.value = this.beat;
     gu.uDeath.value = this.death;
     gu.uCall.value = this.call;
+    gu.toneMappingExposure.value = game.renderer.toneMappingExposure;
     // Optional player brightness setting (not in the contract yet): 1 = as graded, >1 lifts shadows.
     const brightness = game.settings?.brightness;
     gu.uGamma.value = 1 / (typeof brightness === 'number' && brightness > 0 ? clamp(brightness, 0.5, 2) : 1);

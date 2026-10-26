@@ -37,8 +37,8 @@ uniform vec4 atmoFogGlow;
 
 vec3 atmoFogTint( vec3 rd, vec3 horizon ) {
   float up = max( rd.y, 0.0 );
-  float band = exp( - up * 16.0 );
-  float mid = exp( - up * 3.2 );
+  float band = exp( - up * 13.0 );
+  float mid = exp( - up * 2.1 );
   vec3 c = atmoFogZenith + atmoFogMid * mid + ( horizon - atmoFogZenith - atmoFogMid ) * band;
   c *= 1.0 - 0.4 * smoothstep( 0.0, 0.7, - rd.y );
   vec2 flat2 = rd.xz / max( length( rd.xz ), 1e-4 );

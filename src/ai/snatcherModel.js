@@ -2,12 +2,14 @@
 //
 //   const model = createSnatcherModel(seed);
 //   scene.add(model.root);                 // feet at origin, faces -Z; the AI moves/rotates root
-//   model.update(dt, { speed, mode, headYaw, headPitch, alert, time });
+//   model.update(dt, { speed, mode, headYaw, headPitch, alert, time, slump });
 //   model.headAnchor.getWorldPosition(v);  // the face, for the death-cam look-at
 //
 // Every anim field is optional; non-finite numbers count as 0. headYaw/headPitch are relative to
 // the body's facing and level (not to the hunched neck); headYaw is wrapped to [-PI, PI]. `time`
-// is accepted but the model keeps its own clock (so paused snatchers don't twitch in sync). The
+// is accepted but the model keeps its own clock (so paused snatchers don't twitch in sync). slump
+// (0..1, sleepers) sits the figure down on the ground, hunched over its knees; easing it to 0 it
+// gets up (plant feet, fold forward, rise). The
 // AI states 'patrol'/'return' (and unknown modes) pose as 'walk' when moving, 'idle' when not.
 // In 'grab' the snatcher lunges ~0.6 m forward and brings its face down to ~1.6 m: at
 // 1.0-1.15 m from the player's eye the face ends 0.35-0.5 m away.
@@ -173,6 +175,7 @@ class SnatcherAnimator {
     this.modeTime = 0;
     this.p = { ...MODES.idle };
     this.speed = 0;
+    this.slump = 0;
     this.phase = this.rng();
     this.gait = 0;
     this.lift = 0;
@@ -231,7 +234,16 @@ class SnatcherAnimator {
     const P = this.p;
     const t = this.t;
     const b = this.b;
-    const tr = P.tremor + 0.1 * alert;
+    // Sleeping: anim.slump 1 = sat on the ground, hunched over drawn-up knees, head hanging, arms
+    // draped forward; easing to 0 it plants its feet, folds forward over them and rises (the AI
+    // eases it 1 -> 0 over ~1.5 s). The AI ramps it already; this only smooths a teleport.
+    const slumpIn = clamp(finite(anim.slump), 0, 1);
+    this.slump = teleported ? slumpIn : damp(this.slump, slumpIn, 10, dt);
+    const slp = this.slump;
+    const sitK = smoothstep(0.3, 1, slp); // feet forward, knees up, trunk curled
+    const lowK = smoothstep(0, 0.9, slp); // hips down
+    const rise = Math.sin(Math.PI * smoothstep(0.05, 0.75, slp)) * (1 - sitK * 0.6); // lean over the feet to stand
+    const tr = (P.tremor + 0.1 * alert) * (1 - 0.8 * sitK);
 
     // --- gait: stride phase advances with distance (anim.speed), feet are IK-planted.
     // Slow walking takes shorter steps (cycle length D shrinks) rather than shorter strides, so
@@ -256,8 +268,11 @@ class SnatcherAnimator {
     const legLen = LEG.thigh + LEG.shin;
     const reach = halfStride * 0.8;
     const gaitDrop = Math.max(0, legLen - Math.sqrt(Math.max(0.1, legLen * legLen * 0.995 - reach * reach)));
-    const leanEff = P.lean + 0.035 * v + 0.05 * alert + P.peer * 0.04 * Math.abs(this.scan);
-    const chestPitch = leanEff + P.hunch;
+    const leanEff = P.lean + 0.035 * v + 0.05 * alert + P.peer * 0.04 * Math.abs(this.scan) + 0.55 * rise;
+    // Seated: the pelvis rolls back a little, the spine and chest curl forward over the knees.
+    const sitTilt = 0.14 * sitK;
+    const sitCurl = 0.36 * sitK;
+    const chestPitch = leanEff + P.hunch + sitCurl - sitTilt;
 
     // --- hips & spine
     const ph = this.phase * Math.PI * 2;
@@ -265,15 +280,16 @@ class SnatcherAnimator {
     const swayZ = P.sway * 0.01 * Math.sin(t * 0.47 + this.seed * 2.1);
     const bob = 0.007 * gw * Math.cos(2 * ph);
     const hips = b[BONE.hips];
-    const hipsZ = swayZ + leanEff * 0.08;
-    hips.position.set(swayX, 1.06 - P.drop - gaitDrop * 0.85 - bob - 0.02 * P.toe, hipsZ - 0.8 * P.lunge);
+    const hipsZ = swayZ + leanEff * 0.08 * (1 - lowK) + 0.12 * sitK;
+    const standY = 1.06 - P.drop - gaitDrop * 0.85 - bob - 0.02 * P.toe;
+    hips.position.set(swayX * (1 - lowK), lerp(standY, 0.19, lowK), hipsZ - 0.8 * P.lunge);
     const pelvisYaw = 0.07 * gw * Math.cos(ph);
-    const pelvisRoll = 0.03 * gw * Math.sin(ph) + P.sway * 0.012 * Math.sin(t * 0.63 + this.seed + 0.6);
-    hips.rotation.set(0, pelvisYaw, pelvisRoll);
-    const breath = Math.sin(t * 1.25 + this.seed) * P.breath;
+    const pelvisRoll = 0.03 * gw * Math.sin(ph) + P.sway * 0.012 * Math.sin(t * 0.63 + this.seed + 0.6) * (1 - sitK) + 0.05 * sitK;
+    hips.rotation.set(sitTilt, pelvisYaw, pelvisRoll);
+    const breath = Math.sin(t * (1.25 - 0.5 * sitK) + this.seed) * Math.max(P.breath, 1.4 * sitK);
     const peerRoll = P.peer * 0.08 * this.scan;
-    b[BONE.spine].rotation.set(-leanEff * 0.55 + 0.01 * tr * tremble(t, 9), -pelvisYaw * 0.6, -pelvisRoll * 0.7 + peerRoll * 0.5);
-    b[BONE.chest].rotation.set(-(leanEff * 0.45 + P.hunch) - 0.012 * breath, -pelvisYaw * 0.4 + 0.12 * this.scan * P.peer, peerRoll * 0.5);
+    b[BONE.spine].rotation.set(-leanEff * 0.55 - 0.16 * sitK + 0.01 * tr * tremble(t, 9), -pelvisYaw * 0.6, -pelvisRoll * 0.7 + peerRoll * 0.5);
+    b[BONE.chest].rotation.set(-(leanEff * 0.45 + P.hunch) - 0.34 * sitK - 0.012 * breath, -pelvisYaw * 0.4 + 0.12 * this.scan * P.peer, peerRoll * 0.5 - 0.06 * sitK);
 
     hips.updateMatrix();
     b[BONE.spine].updateMatrix();
@@ -293,7 +309,13 @@ class SnatcherAnimator {
         _target.z -= 1.6 * P.lunge;
         _target.y += 0.12 * 4 * lungeK * (1 - lungeK);
       }
-      this.solveLeg(side, _target);
+      if (slp > 0) {
+        // Seated: feet drawn up in front, a little apart, toes up; knees fall outward.
+        _target.z -= 0.5 * sitK + 0.08 * (lowK - sitK);
+        _target.x += s * (0.07 * sitK + 0.03 * (s < 0 ? 1 : 0.4) * sitK);
+        this._footPitch += 0.3 * sitK;
+      }
+      this.solveLeg(side, _target, s * (0.3 + 0.08 * s) * sitK, sitK);
     }
 
     // --- arms: limp pendulums driven by body acceleration, or held up when stiff.
@@ -309,10 +331,13 @@ class SnatcherAnimator {
       const legPhase = (this.phase + (s < 0 ? 0.5 : 0)) % 1;
       const swing = 0.09 * gw * (1 - P.stiff) * Math.sin(legPhase * Math.PI * 2);
       const reach = P.reach * 0.08 * Math.sin(t * 2.3 + s * 1.3);
-      b[side.clav].rotation.set(0, -s * 0.06 * P.armFlex, s * (P.shrug * 0.22 + 0.012 * breath + 0.03 * tr * tremble(t, 5 + s)));
-      b[side.arm].rotation.set(P.armFlex + chestPitch + swing + pd.f + reach, s * P.twist, s * (P.armOut + pd.o + 0.03 * P.reach * Math.sin(t * 1.7 + s)));
-      b[side.fore].rotation.set(P.elbow + 0.4 * Math.max(0, -pd.f) * (1 - P.stiff) + 0.06 * P.reach * Math.sin(t * 2.9 + s), s * P.pron * 1.3, 0);
-      b[side.hand].rotation.set(P.wrist + 0.12 * tr * tremble(t, 3 + s), 0, -s * 0.06);
+      // Seated: upper arms reach down-forward past the knees, forearms and long hands hang to the
+      // ground in front of the feet. Rising, the arms swing forward to counterbalance.
+      const drape = sitK * (s < 0 ? 1 : 0.9);
+      b[side.clav].rotation.set(0, -s * 0.06 * P.armFlex, s * (P.shrug * 0.22 + 0.012 * breath + 0.03 * tr * tremble(t, 5 + s) - 0.1 * sitK));
+      b[side.arm].rotation.set(P.armFlex + chestPitch + swing + pd.f + reach + 0.5 * drape + 0.45 * rise, s * P.twist, s * (P.armOut + pd.o + 0.03 * P.reach * Math.sin(t * 1.7 + s) + 0.16 * drape));
+      b[side.fore].rotation.set(P.elbow + 0.4 * Math.max(0, -pd.f) * (1 - P.stiff) + 0.06 * P.reach * Math.sin(t * 2.9 + s) + 1.05 * drape, s * P.pron * 1.3, 0);
+      b[side.hand].rotation.set(P.wrist + 0.12 * tr * tremble(t, 3 + s) - 0.7 * drape, 0, -s * 0.06);
       const curl = clamp(P.curl + 0.15 * alert + this.tw.curl + 0.28 * P.reach * Math.sin(t * 5.1 + s * 2) + 0.2 * tr * tremble(t, 4 + s), -0.25, 1.25);
       b[side.f1].rotation.set(0, 0, -s * curl * 0.75);
       b[side.f2].rotation.set(0, 0, -s * curl * 0.95);
@@ -320,12 +345,15 @@ class SnatcherAnimator {
 
     // --- neck & head: the gaze is solved in model space so headYaw/headPitch stay world-levelled.
     const sweepYaw = P.sweep * this.scan;
-    const yawTotal = clamp(headYaw + sweepYaw + this.tw.yaw + this.jk.yaw, -2.3, 2.3);
-    const basePitch = headPitch + P.look + this.tw.pitch + this.jk.pitch + 0.025 * tr * tremble(t, 1);
-    const pitchTotal = clamp(basePitch + P.sky * Math.max(0, 1.05 - basePitch), -1.1, 1.3);
-    const roll = P.roll + this.tw.roll + this.jk.roll + 0.03 * tr * tremble(t, 2) + peerRoll * 0.6;
+    // Asleep the head hangs forward and lolls to one side; whatever the AI looks at only nudges it.
+    const hang = sitK * (1 - 0.15 * Math.sin(t * 0.7 + this.seed) * Math.sin(t * 0.31));
+    const twK = 1 - 0.6 * sitK;
+    const yawTotal = clamp(headYaw * (1 - 0.7 * sitK) + sweepYaw + (this.tw.yaw + this.jk.yaw) * twK, -2.3, 2.3);
+    const basePitch = headPitch + P.look + (this.tw.pitch + this.jk.pitch) * twK + 0.025 * tr * tremble(t, 1) - 0.8 * hang;
+    const pitchTotal = clamp(basePitch + P.sky * Math.max(0, 1.05 - basePitch), -1.25, 1.3);
+    const roll = P.roll + (this.tw.roll + this.jk.roll) * twK + 0.03 * tr * tremble(t, 2) + peerRoll * 0.6 + (this.seed % 2 ? 0.42 : -0.42) * hang;
     const neck = b[BONE.neck];
-    neck.rotation.set(-P.neck, yawTotal * 0.3, 0);
+    neck.rotation.set(-P.neck - 0.3 * sitK, yawTotal * 0.3, 0);
     neck.updateMatrix();
     _q1.setFromRotationMatrix(_m1.multiplyMatrices(_chestM, neck.matrix)); // neck orientation, model space
     _e.set(pitchTotal, yawTotal, roll, 'YXZ');
@@ -333,7 +361,7 @@ class SnatcherAnimator {
     b[BONE.head].quaternion.copy(_q1.invert().multiply(_q2));
 
     // --- jaw & sliding face
-    let jaw = P.jaw + 0.1 * alert + 0.02 * (breath + 1) + 0.05 * tr * tremble(t, 6);
+    let jaw = P.jaw + 0.1 * alert + 0.02 * (breath + 1) + 0.05 * tr * tremble(t, 6) + 0.22 * sitK;
     jaw += 0.07 * P.jerk * Math.max(0, Math.sin(t * 19 + this.seed)) * (Math.sin(t * 2.1) > 0 ? 1 : 0);
     if (this.mode === 'grab') jaw *= lerp(0.25, 1, smoothstep(0.15, 1.1, this.modeTime));
     b[BONE.jaw].rotation.set(-clamp(jaw, 0, 1.15) * 0.62, 0, 0);
@@ -468,7 +496,9 @@ class SnatcherAnimator {
   }
 
   // Two-bone IK in the hips frame; knee bends forward, foot keeps its pitch to the ground.
-  solveLeg(sideBones, target) {
+  // splay: extra outward roll of the whole leg (seated knees falling apart); sit 0..1 measures the
+  // sideways reach against the leg's whole drop + reach (a seated leg points forward, not down).
+  solveLeg(sideBones, target, splay = 0, sit = 0) {
     const thigh = this.b[sideBones.thigh], shin = this.b[sideBones.shin], foot = this.b[sideBones.foot];
     _v1.copy(thigh.position).applyMatrix4(_hipsM); // hip joint, model space
     _d.subVectors(target, _v1).applyQuaternion(_qHipsInv);
@@ -476,7 +506,7 @@ class SnatcherAnimator {
     const dist = _d.length() || 1e-4;
     const len = clamp(dist, 0.25, a + c - 1e-4);
     const fwd = Math.asin(clamp(-_d.z / dist, -1, 1));
-    const side = Math.atan2(_d.x, -_d.y);
+    const side = Math.atan2(_d.x, lerp(-_d.y, Math.hypot(_d.y, _d.z), sit)) + splay;
     const knee = Math.acos(clamp((a * a + c * c - len * len) / (2 * a * c), -1, 1));
     const hipA = Math.acos(clamp((a * a + len * len - c * c) / (2 * a * len), -1, 1));
     const flex = fwd + hipA;

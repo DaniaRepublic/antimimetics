@@ -14,7 +14,7 @@ const mix = (a, b, t) => new THREE.Color(a.r + (b.r - a.r) * t, a.g + (b.g - a.g
 export const COL = {
   black: C(0x0b0b0c),
   tyre: C(0x101010),
-  char: C(0x1e1915),
+  char: C(0x30271f), // burnt paint: charred grey-brown (lighter than black so the shapes read in the dark)
   rust: C(0x5a3420),
   steel: C(0x5d5f62),
   darkSteel: C(0x2a2b2d),
@@ -63,6 +63,27 @@ const rock = (seed) =>
     let s = seed * 9301 + 49297;
     const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
     for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) * (0.7 + rnd() * 0.6), p.getY(i) * (0.5 + rnd() * 0.5), p.getZ(i) * (0.7 + rnd() * 0.6));
+    g.computeVertexNormals();
+    return g;
+  });
+
+// Lumpy unit dome (radius 1, height 1, base at y = 0): the solid core of a rubble heap, so the
+// chunks piled on it never float with daylight between them.
+const heap = (seed) =>
+  cachedGeo(`heap${seed % 4}`, () => {
+    const g = new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+    const p = g.attributes.position;
+    const h3 = (x, y, z) => {
+      const v = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + seed * 4.13) * 43758.5453;
+      return v - Math.floor(v);
+    };
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      // displacement keyed on the rounded position, so the seam's duplicate vertices stay welded
+      const k = 0.78 + 0.4 * h3(Math.round(x * 50), Math.round(y * 50), Math.round(z * 50));
+      const rim = y < 0.01 ? 1 : k;
+      p.setXYZ(i, x * rim, y * k * (0.85 + 0.3 * (1 - y)), z * rim);
+    }
     g.computeVertexNormals();
     return g;
   });
@@ -139,7 +160,7 @@ function strut(b, key, M, x, u1, y1, u2, y2, w, color) {
 export function car(B, o) {
   const { x, z, yaw = 0, type = 'sedan', burnt = false, door = false, roll = 0, fire = false, police = false, alarm = null, sink = 0 } = o;
   const T = CAR[type];
-  const paint = burnt ? mix(COL.char, COL.rust, B.rng() * 0.35) : o.color || B.rng.pick(CAR_PAINT);
+  const paint = burnt ? mix(COL.char, COL.rust, 0.12 + B.rng() * 0.4) : o.color || B.rng.pick(CAR_PAINT);
   const drop = burnt ? 0.12 : 0;
   let M;
   if (roll === 1) M = mat(x, T.roof - drop, z, yaw, 0, Math.PI);
@@ -251,7 +272,7 @@ function busSection(B, M, L, paint, burnt, front) {
   b.box(key, sub(M, 0, 0.35, 0), W, 1.05, L, paint, { ao: 0.4 });
   b.box(key, sub(M, 0, 0.95, 0), W + 0.02, 0.18, L, burnt ? COL.char : C(0x7a1a14), { ao: 0 });
   if (burnt) {
-    b.box('rough', sub(M, 0, 1.4, 0), W - 0.1, 1.0, L - 0.2, COL.black, { ao: 0, faces: FACE.px | FACE.nx | FACE.pz | FACE.nz });
+    b.box('rough', sub(M, 0, 1.4, 0), W - 0.1, 1.0, L - 0.2, C(0x16110e), { ao: 0, faces: FACE.px | FACE.nx | FACE.pz | FACE.nz });
     for (let k = -L / 2 + 0.3; k <= L / 2 - 0.2; k += 1.25) b.box('rough', sub(M, 0, 1.4, k), W + 0.01, 1.0, 0.1, paint, { ao: 0 });
   } else {
     b.box('glass', sub(M, 0, 1.4, 0), W + 0.02, 1.0, L - 0.4, COL.glass, { ao: 0 });
@@ -269,7 +290,7 @@ function busSection(B, M, L, paint, burnt, front) {
 
 // Articulated bus jack-knifed at `fold` radians, or a single bus (rear omitted).
 export function bus(B, { x, z, yaw = 0, fold = 0, burnt = false, articulated = true }) {
-  const paint = burnt ? mix(COL.char, COL.rust, 0.3) : C(0xb8ad96);
+  const paint = burnt ? mix(COL.char, COL.rust, 0.42) : C(0xb8ad96);
   const Lf = 11.5, Lr = 7;
   const M = mat(x, burnt ? -0.15 : 0, z, yaw);
   busSection(B, M, Lf, paint, burnt, true);
@@ -526,6 +547,11 @@ export function belongings(B, { x, z, n = 3, spread = 1.5 }) {
 // Irregular pile of broken concrete, slabs and rebar. Collider: a core box of height h.
 export function rubble(B, { x, z, w, d, h, yaw = 0, collider = true, color = COL.concrete, density = 1 }) {
   const b = B.batch;
+  if (h > 0.8) {
+    // solid core under the chunks
+    const core = mix(color, COL.darkConcrete, 0.55);
+    b.geom('rough', heap(Math.round(x * 7 + z * 3)), mat(x, 0, z, yaw, 0, 0, w * 0.47, h * 0.78, d * 0.47), core, { uvScale: 2.5 });
+  }
   const n = Math.round(((w * d) / 1.6 + 6) * density);
   for (let k = 0; k < n; k++) {
     const u = B.rng() - 0.5, v = B.rng() - 0.5;
@@ -584,10 +610,22 @@ export function planter(B, { x, z, w = 2.6, d = 1.2, h = 1.15, yaw = 0, tree = f
 export function kiosk(B, { x, z, yaw = 0 }) {
   const b = B.batch;
   const M = mat(x, 0, z, yaw);
-  b.box('paint', M, 2.6, 2.5, 2.0, C(0x2a3a32), { ao: 0.4 });
-  b.box('paint', sub(M, 0, 2.5, -0.2), 3.1, 0.18, 2.6, C(0x1a2420), { ao: 0 });
+  b.box('paint', M, 2.6, 2.5, 2.0, C(0x44584c), { ao: 0.45 });
+  b.box('paint', sub(M, 0, 2.5, -0.2), 3.1, 0.18, 2.6, C(0x2a3530), { ao: 0 });
   const f = _rot(0, -1.01, yaw);
   B.batch.wall('store', x + f.x, 0.4, z + f.z, 2.2, 1.7, yaw, storeUV(STORE.shutter));
+  // Flyers pasted over the other three sides, so the kiosk is not a plain dark block. (Varied by a
+  // local hash, not B.rng: the shared sequence drives the layout of everything built after this.)
+  const flyers = [[1.315, -0.35, -Math.PI / 2], [1.315, 0.5, -Math.PI / 2], [-1.315, 0.1, Math.PI / 2], [0.55, 1.015, Math.PI], [-0.6, 1.015, Math.PI]];
+  flyers.forEach(([lx, lz, fy], i) => {
+    const r = (k) => {
+      const v = Math.sin(x * 12.99 + z * 78.23 + i * 37.7 + k * 5.1) * 43758.55;
+      return v - Math.floor(v);
+    };
+    const p = _rot(lx, lz, yaw);
+    const w = 0.7 + r(1) * 0.3;
+    B.batch.wall('signs', x + p.x, 0.55 + r(2) * 0.35, z + p.z, w, w * 1.45, yaw + fy, signUV('poster'), shade(C(0xffffff), 0.55 + r(3) * 0.35));
+  });
   for (let k = 0; k < 3; k++) {
     const p = _rot(1.0 - k * 0.5, -1.3, yaw);
     b.box('rough', mat(x + p.x, 0, z + p.z, yaw + B.rng() * 0.5), 0.35, 0.05 + B.rng() * 0.1, 0.5, C(0x8a8478), { ao: 0 });

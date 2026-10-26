@@ -51,7 +51,7 @@ void main() {
     float d = n3( q ) * 0.58 + n3( q * 2.9 + vec3( 0.37, 0.11, uChurn * 0.04 ) ) * 0.3 + n3( q * 7.3 + vec3( 0.71, 0.53, uChurn * 0.07 ) ) * 0.12;
     d = clamp( ( d - 0.46 ) * 2.3 + 0.5, 0.0, 1.0 ); // noise mean is ~0.46
     cover = smoothstep( 0.38, 0.72, d );
-    float lowLit = exp( - max( up, 0.0 ) * 3.0 );
+    float lowLit = exp( - max( up, 0.0 ) * 2.3 ); // the burning city lights the deck from below
     vec3 cloudCol = mix( uCloudHigh, uCloudLow, lowLit ) * ( 0.5 + 0.9 * d ) * ( 1.0 + uCall * 0.6 );
     // thin rims catch more of the glow than the dense cores
     cloudCol += uCloudLow * 0.5 * smoothstep( 0.3, 0.45, d ) * ( 1.0 - smoothstep( 0.45, 0.7, d ) ) * lowLit;

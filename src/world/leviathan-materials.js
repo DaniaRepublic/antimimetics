@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FOG_TINT_GLSL, FOG_UNIFORMS } from './atmosphere-fog.js';
 
 // Shaders for the leviathan. Every material shares one uniforms object, so the creature writes
 // each value once per frame. The look is deliberately stylised rather than lit by scene lights:
@@ -9,6 +10,7 @@ import * as THREE from 'three';
 
 export function createLeviathanUniforms() {
   return {
+    ...FOG_UNIFORMS, // shared with the atmosphere (sky-matched haze colour, height fog)
     uTime: { value: 0 },
     uCall: { value: 0 }, // call envelope 0..1
     uGlow: { value: 1 }, // bioluminescence multiplier
@@ -41,16 +43,47 @@ uniform vec3 uMistColor;
 uniform float uMistDensity;
 uniform float uMistLow;
 uniform float uMistTop;
+${FOG_TINT_GLSL}
 
+// The haze colour of the sky behind a point (matches the sky dome and the scene's fog), so the
+// creature's haze is always a little darker than whatever sky it stands against.
+vec3 levSkyTint(vec3 wp) {
+  vec3 rd = normalize(wp - cameraPosition);
+  return atmoFogParams.x > 0.5 ? atmoFogTint(rd, uMistColor) : uMistColor;
+}
+
+// Silhouette tint: uFogColor is the fog colour pre-multiplied by the creature's silhouette factor.
+float levSilhouette() {
+  return dot(uFogColor, vec3(1.0)) / max(dot(uMistColor, vec3(1.0)), 1e-5);
+}
+
+// Its own thin haze (it reads from anywhere in the city).
 float levFogAmount(vec3 wp) {
   float d = distance(cameraPosition, wp);
   return 1.0 - exp(-uFogDensity * uFogDensity * d * d);
 }
 
+// The scene's height fog along the view ray (same integral as the patched fog chunk), applied to
+// the low parts only: legs and feet sink into the same haze as the buildings around them.
 float levMistAmount(vec3 wp) {
-  float d = distance(cameraPosition, wp);
-  float m = 1.0 - exp(-uMistDensity * uMistDensity * d * d);
-  return m * (1.0 - smoothstep(uMistLow, uMistTop, wp.y));
+  vec3 ray = wp - cameraPosition;
+  float dist = length(ray);
+  float tau;
+  if (atmoFogParams.x > 0.5) {
+    float b = atmoFogParams.y;
+    float k = clamp(b * ray.y, -60.0, 60.0);
+    float shape = abs(k) > 1e-3 ? (1.0 - exp(-k)) / k : 1.0 - 0.5 * k;
+    tau = uMistDensity * dist * (atmoFogParams.z + (1.0 - atmoFogParams.z) * exp(-b * max(cameraPosition.y, 0.0)) * shape);
+  } else {
+    tau = uMistDensity * dist;
+  }
+  return (1.0 - exp(-tau * tau)) * (1.0 - smoothstep(uMistLow, uMistTop, wp.y));
+}
+
+vec3 levHaze(vec3 col, vec3 wp) {
+  vec3 sky = levSkyTint(wp);
+  col = mix(col, sky * levSilhouette(), levFogAmount(wp));
+  return mix(col, sky, levMistAmount(wp));
 }
 `;
 
@@ -231,8 +264,7 @@ void main() {
   float fres = pow(1.0 - ndv, 3.0);
   col += uSky * shade * (0.03 * up * up + 0.3 * fres * (0.45 + 0.55 * up));
   col += uGlowColor * glow * uGlow;
-  col = mix(col, uFogColor, levFogAmount(vWorld));
-  col = mix(col, uMistColor, levMistAmount(vWorld));
+  col = levHaze(col, vWorld);
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

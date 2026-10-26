@@ -430,8 +430,12 @@ function getClothMaterial() {
       '#include <emissivemap_fragment>',
       `#include <emissivemap_fragment>
       {
+        // Grazing edges catch the red sky: strongest on the up-facing shoulders, hood and arms,
+        // so a snatcher standing against a dark facade still has an outline.
         float rim = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
-        totalEmissiveRadiance += vec3(0.05, 0.006, 0.004) * pow(rim, 3.0);
+        vec3 upV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+        float skyward = clamp(dot(normal, upV) * 0.5 + 0.5, 0.0, 1.0);
+        totalEmissiveRadiance += vec3(0.085, 0.012, 0.008) * pow(rim, 2.6) * (0.3 + 0.7 * skyward);
       }`,
     );
   };
