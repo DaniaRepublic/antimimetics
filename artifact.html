@@ -1,0 +1,30 @@
+<title>When It Calls</title>
+<meta name="description" content="A first-person stealth-horror fragment inspired by qntm's There Is No Antimemetics Division. Get out of the city. Don't be seen.">
+<style>
+  /* Single dark look: a fullscreen game canvas with the HUD drawn over it. */
+  :root {
+    --bg: #070304;
+    --ink: #e8d9d2;
+    --ink-dim: #9c8a84;
+    color-scheme: dark;
+  }
+  html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Courier New", ui-monospace, Menlo, Consolas, monospace;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #app { position: fixed; inset: 0; }
+  #app canvas { display: block; width: 100%; height: 100%; outline: none; }
+  #boot {
+    position: fixed; inset: 0; display: grid; place-items: center;
+    color: var(--ink-dim); letter-spacing: 0.3em; font-size: 12px;
+  }
+</style>
+<div id="app"></div>
+<div id="boot">LOADING</div>
+<!-- BUNDLE -->
