@@ -1,6 +1,12 @@
 // Whole-game audio session, rendered offline and measured per mix bus.
 //
 //   node tools/ux-audio-session.mjs [--no-build] [--seconds 660] [--out dist/shots/ux-audio] [--no-soak]
+//        [--html dist/index.html] [--sr 48000] [--slow] [--exp noreverb,nohrtf]
+//
+// About 0.5-1x real time under SwiftShader (the audio graph is the cost, not the game): run it in
+// the background. --no-soak stops after the scripted route (~5 min); the soak afterwards wanders
+// the plaza throwing bottles and setting off alarms, to show voice/node counts stay bounded.
+// --slow logs render steps that took long, --exp switches off the reverbs / HRTF to profile.
 //
 // Boots the real game (all real modules, ?quality=0), swaps the engine's AudioContext for an
 // OfflineAudioContext and then steps game and audio together: the context is suspended every

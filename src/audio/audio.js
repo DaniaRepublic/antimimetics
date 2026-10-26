@@ -36,17 +36,19 @@ const TAU = Math.PI * 2;
 
 // Mix levels (linear gain at each voice's input), calibrated at the default volume, where the
 // master path is unity gain below the glue compressor. Measured with tools/ux-audio-session.mjs
-// (K-weighted momentary maxima at the output): ambience bed ~-33, player crouch step ~-48, walk
-// ~-33, sprint ~-24, snatcher whisper at 10 m clearly over the bed in the 0.5-4 kHz band, near
-// footfall ~-15 (and audible above 200 Hz), the call ~-12 and everything else ducked under it,
-// the grab ~-19 dBFS RMS.
+// over a scripted 10-minute play session (K-weighted momentary maxima per bus): ambience bed
+// ~-32, player crouch step ~-47 (15 dB under the bed), walk ~-32, sprint ~-24; a snatcher's
+// whisper 8-16 m away 13-17 dB over everything else above 4 kHz and level with it at 0.5-4 kHz;
+// footfalls near ~-15 / far ~-26, with the near ones still ~-30 above 200 Hz; the call ~-12 with
+// everything else ducked under it (master RMS ~-14 dBFS against ~-23 before it); the grab
+// ~-18.5 dBFS RMS; master true peak ~-2.5 dBFS.
 const LEVEL = {
   wind: 0.3, drone: 0.09, tinnitusMin: 0.0015, tinnitusMax: 0.02, heart: 0.2, chase: 0.3,
   footfall: 0.6, call: 1.3, legGroan: 0.55,
   metalGroan: 0.5, structureCreak: 0.4, distantWail: 0.3,
   whisper: 3.2, questionCreak: 3.8, shriek: 0.75, stinger: 0.32, hiss: 0.5, exhale: 0.9,
   creatureStep: 0.4, footstep: 0.55, breath: 0.42, gasp: 0.4, whoosh: 0.28, emptyClick: 0.3, clink: 0.25,
-  shatter: 2.0, alarm: 0.9, chainGrind: 0.9, gateOpen: 0.65, chime: 0.08, swell: 0.3, grab: 0.23, ending: 0.32,
+  shatter: 2.0, alarm: 0.9, chainGrind: 0.9, gateOpen: 0.65, chime: 0.08, swell: 0.3, grab: 0.21, ending: 0.32,
 };
 
 // How much each bus is kept while the leviathan calls.
@@ -707,7 +709,7 @@ export class AudioEngine {
     const p = e.pos ?? e.enemy?.position;
     if (!p) return;
     this.play('creatureStep', { chasing }, {
-      bus: 'enemy', pos: { x: p.x, y: 0.2, z: p.z }, ref: 1.5, gain: LEVEL.creatureStep * (chasing ? 1.6 : 1),
+      bus: 'enemy', pos: { x: p.x, y: 0.2, z: p.z }, ref: 1.5, gain: LEVEL.creatureStep * (chasing ? 1.3 : 1),
       send: 0.14, priority: chasing ? 4 : 2, kind: 'cstep', maxKind: 6, cull: chasing ? 45 : 24,
     });
   }

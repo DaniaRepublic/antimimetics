@@ -2,7 +2,7 @@
 // toasts, ripples...) at desktop and phone sizes, then drives the click flow
 // title -> intro -> playing -> paused -> playing -> dead -> playing. Fails on any console error.
 //
-//   node tools/check-hud.mjs [--no-build] [--out dist/shots/hud] [--only desktop|phone] [--query quality=0]
+//   node tools/check-hud.mjs [--no-build] [--out dist/shots/hud] [--only desktop|phone|flow] [--query quality=0]
 //
 // --query appends URL params to every page (e.g. quality=0 to speed up SwiftShader once the
 // real atmosphere is merged; frames of the full scene can take seconds each headless).
@@ -260,8 +260,9 @@ async function flow() {
     const g = window.__game;
     g.caughtBy = g.director.snatchers[0] || null;
     g.setState('caught');
+    g.simulate(2.8); // (not real frames: a loaded machine can drop to a frame every few seconds)
   });
-  await h.page.waitForFunction(() => window.__game.state === 'dead', null, { timeout: 300000 });
+  check((await state()) === 'dead', 'caught -> dead');
   // A click the moment the dead screen comes up (dispatched in the same task, so slow headless
   // frames can't make it "late") must not skip it.
   const early = await h.eval(() => {
@@ -271,7 +272,7 @@ async function flow() {
     return g.state;
   });
   check(early === 'dead', 'retry ignores an immediate click');
-  await waitStateTime(1.2);
+  await h.eval(() => window.__game.simulate(1.2));
   await h.page.keyboard.press('Enter');
   check((await state()) === 'playing', 'enter on dead screen -> respawn');
   const canvasHit = await h.eval(() => document.elementFromPoint(640, 360) === window.__game.renderer.domElement);
@@ -357,7 +358,7 @@ for (const vp of VIEWPORTS) {
   await screens(vp);
   await debugOverlay(vp);
 }
-if (!only) {
+if (!only || only === 'flow') {
   await flow();
   await tutorial();
 }
