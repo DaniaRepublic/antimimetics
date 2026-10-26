@@ -48,6 +48,11 @@ export class Snatcher {
     this.model = createSnatcherModel(seedFrom(this.id, index));
     this.root = this.model.root;
     game.scene.add(this.root);
+    // Footsteps: if the model reports its foot plants (optional onStep hook), step sounds land
+    // exactly when a foot visibly hits the ground; otherwise fall back to one per ~1.3 m walked.
+    this.modelSteps = 'onStep' in this.model;
+    if (this.modelSteps) this.model.onStep = () => this.footPlanted();
+    this.lastStepAt = -1e9;
     this.anim = { speed: 0, mode: 'idle', headYaw: 0, headPitch: 0, alert: 0, time: 0, slump: 0 };
     this.brain = new Brain(this, game, director);
     this.reset();
@@ -71,6 +76,7 @@ export class Snatcher {
     this.headYaw = 0;
     this.headPitch = 0;
     this.slump = this.def.sleeping ? 1 : 0;
+    this.hold = false; // brain-set: keep the errand but don't move (e.g. still waking up)
     this.goal = null;
     this.path = null;
     this.pathIndex = 0;
@@ -147,9 +153,11 @@ export class Snatcher {
         this.setPath([end]);
         return;
       }
+      // A cached leg is only good from (near) where it was planned: after an errand the snatcher
+      // may rejoin its route from anywhere, and following a stale route would walk it into walls.
       const cached = cacheKey && this.director?.pathCache.get(cacheKey);
-      if (cached) {
-        this.setPath(cached);
+      if (cached && Math.hypot(cached.from.x - pos.x, cached.from.z - pos.z) < 2) {
+        this.setPath(cached.path);
         return;
       }
     }
@@ -166,6 +174,19 @@ export class Snatcher {
     const start = nav.isWalkable(pos.x, pos.z) ? pos : nav.nearestWalkable(pos.x, pos.z, 3);
     if (!end || !start || !nav.lineWalkable(start.x, start.z, end.x, end.z)) return null;
     return end;
+  }
+
+  // Metres left along the current path (0 without one).
+  remainingPathLength() {
+    const path = this.path;
+    if (!path) return 0;
+    let px = this.position.x, pz = this.position.z, len = 0;
+    for (let i = this.pathIndex; i < path.length; i++) {
+      len += Math.hypot(path[i].x - px, path[i].z - pz);
+      px = path[i].x;
+      pz = path[i].z;
+    }
+    return len;
   }
 
   setPath(path) {
@@ -193,7 +214,7 @@ export class Snatcher {
       return;
     }
     if (!this.onHop) this.hopFinal = null; // this is the leg that reaches the real goal
-    if (this.cacheKey) this.director?.pathCache.set(this.cacheKey, path);
+    if (this.cacheKey) this.director?.pathCache.set(this.cacheKey, { from: { x: this.position.x, z: this.position.z }, path });
     this.setPath(path);
   }
 
@@ -276,24 +297,28 @@ export class Snatcher {
     const target = this.brain.slumpTarget;
     const rate = target < this.slump ? 1 / 1.5 : 1 / 2.2;
     this.slump += clamp(target - this.slump, -rate * dt, rate * dt);
-    this.syncRoot();
-    const far = this.distanceToPlayer() > 50;
-    this.animAccum += dt;
-    if (!far || this.animAccum >= 0.1) {
-      this.animate(this.animAccum);
-      this.animAccum = 0;
-    }
+    const dist = this.syncRoot();
+    // Animation LOD: full rate nearby, 10 Hz far away, nothing at all once hidden by the mist.
+    this.tickModel(dt, dist > 50 ? 0.1 : 0);
   }
 
   // Outside the player's neighbourhood: no thinking, just a slow idle pose.
   updateDormant(dt) {
     this.actualSpeed = 0;
+    this.root.visible = this.distanceToPlayer() < CULL_DISTANCE;
+    this.tickModel(dt, 0.25);
+  }
+
+  tickModel(dt, interval) {
+    if (!this.root.visible) {
+      this.animAccum = 0;
+      return;
+    }
     this.animAccum += dt;
-    if (this.animAccum >= 0.25) {
+    if (this.animAccum >= interval) {
       this.animate(this.animAccum);
       this.animAccum = 0;
     }
-    this.root.visible = this.distanceToPlayer() < CULL_DISTANCE;
   }
 
   distanceToPlayer() {
@@ -306,7 +331,7 @@ export class Snatcher {
     let targetSpeed = 0;
     let dirX = 0, dirZ = 0;
     let desiredYaw = this.faceYaw ?? this.yaw;
-    const path = this.path;
+    const path = this.hold ? null : this.path;
     if (path) {
       let wp = path[this.pathIndex];
       let dx = wp.x - pos.x, dz = wp.z - pos.z;
@@ -362,8 +387,8 @@ export class Snatcher {
     this.velocity.set(mx / dt, 0, mz / dt);
     this.actualSpeed = moved / dt;
 
-    // Footsteps for audio.
-    if (this.actualSpeed > 0.3) {
+    // Footsteps for audio (when the model doesn't report its own foot plants).
+    if (!this.modelSteps && this.actualSpeed > 0.3) {
       this.stride += moved;
       const strideLen = this.chasing ? 1.7 : 1.3;
       if (this.stride >= strideLen) {
@@ -373,7 +398,7 @@ export class Snatcher {
     }
 
     // Unstuck: trying to move but making no progress.
-    if (this.path && this.moveSpeed > 0.25 && !this.pathPending) {
+    if (this.path && this.moveSpeed > 0.25 && !this.pathPending && !this.hold) {
       this.stuckClock += dt;
       if (this.stuckClock >= STUCK_WINDOW) {
         if (Math.hypot(pos.x - this.stuckX, pos.z - this.stuckZ) < STUCK_PROGRESS) this.handleStuck();
@@ -387,6 +412,13 @@ export class Snatcher {
       this.stuckX = pos.x;
       this.stuckZ = pos.z;
     }
+  }
+
+  footPlanted() {
+    const now = this.game.time;
+    if (!this.active || this.actualSpeed < 0.2 || now - this.lastStepAt < 0.18) return;
+    this.lastStepAt = now;
+    this.game.bus.emit('enemy:step', { enemy: this, pos: this.position.clone(), chasing: this.chasing });
   }
 
   handleStuck() {
@@ -432,10 +464,13 @@ export class Snatcher {
     this.headPitch += (tp - this.headPitch) * k;
   }
 
+  // Moves the visual root to the body; returns the distance to the player.
   syncRoot() {
     this.root.position.set(this.position.x, 0, this.position.z);
     this.root.rotation.y = this.yaw;
-    this.root.visible = this.distanceToPlayer() < CULL_DISTANCE;
+    const dist = this.distanceToPlayer();
+    this.root.visible = dist < CULL_DISTANCE;
+    return dist;
   }
 
   animMode() {

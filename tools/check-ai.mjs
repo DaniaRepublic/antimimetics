@@ -337,9 +337,13 @@ const scenarios = [
       T.setup({ enemies: [T.sentryDef('a', 0, -62), T.sentryDef('b', 2.5, -63)], light: 0.8, player: { x: 0.5, z: -55 } });
       T.run(10);
       const caught = T.ev('player:caught');
+      // While one has you, the other closes in and watches: no "lost"/"giveup" stings during the death.
+      const after = caught.length ? T.events.filter((e) => e.t > caught[0].t && (e.type === 'enemy:lost' || e.type === 'enemy:giveup')) : [];
+      const other = g.director.snatchers.find((s) => s.state !== 'grab');
+      const otherGap = other ? T.dist(other, g.player.position.x, g.player.position.z) : 99;
       return {
-        pass: caught.length === 1 && g.state !== 'playing' && g.director.snatchers.some((s) => s.state === 'grab'),
-        detail: `player:caught x${caught.length} @${caught.map((e) => e.t + 's by ' + e.id).join(', ')}; game state ${g.state}; states ${g.director.snatchers.map((s) => s.state)}`,
+        pass: caught.length === 1 && g.state !== 'playing' && g.director.snatchers.some((s) => s.state === 'grab') && after.length === 0 && otherGap < 3.2,
+        detail: `player:caught x${caught.length} @${caught.map((e) => e.t + 's by ' + e.id).join(', ')}; game state ${g.state}; states ${g.director.snatchers.map((s) => s.state)}; other one ${otherGap.toFixed(1)} m away; lost/giveup during death x${after.length}`,
       };
     },
   },
@@ -665,6 +669,107 @@ const scenarios = [
       return {
         pass: phase1.z0 && phase1.z1 && phase1.z3 && raptured && z0Frozen && z3Moves && home,
         detail: `cz=0: z0 moves ${phase1.z0}, z1 moves ${phase1.z1}, z3 frozen ${phase1.z3}; cz=2 mid-call: z3+z1 rapture ${raptured}, z0 dormant ${z0Frozen}; after call z3 moves ${z3Moves}; reset -> at spawn & calm ${home}`,
+      };
+    },
+  },
+  {
+    n: 18,
+    name: 'sound bends round a lamp pole and a statue (alarm still heard at 40 m) but a building muffles it',
+    run: () => {
+      const T = window.__t;
+      const g = T.g;
+      const car = { x: 0, y: 0.8, z: -30 };
+      const alarm = () => {
+        g.bus.emit('alarm:start', { id: 'car', pos: car, duration: 14 });
+        T.run(1);
+      };
+      // A statue plinth (3.4 m wide, 5.2 m tall) and a lamp pole right on the line to the listener.
+      T.setup({
+        enemies: [T.sentryDef('a', 0, -70)],
+        boxes: [{ x: 0, z: -45, w: 3.4, d: 3.4, h: 5.2 }, { x: 0, z: -58, w: 0.25, d: 0.25, h: 6 }],
+        player: { x: 0, z: 5 },
+      });
+      const occl1 = T.s('a').brain.soundOccluded(car);
+      alarm();
+      const heard = T.s('a').state;
+      // A 16 m wide building in between instead.
+      g.director.reset();
+      g.world.addBox({ x: 0, z: -50, w: 16, d: 6, h: 9 });
+      const occl2 = T.s('a').brain.soundOccluded(car);
+      alarm();
+      const muffled = T.s('a').state;
+      return {
+        pass: !occl1 && heard === 'alarm' && occl2 && muffled === 'idle',
+        detail: `pole + statue: occluded ${occl1}, listener -> ${heard}; building: occluded ${occl2}, listener -> ${muffled}`,
+      };
+    },
+  },
+  {
+    n: 19,
+    name: 'a sleeper woken by an alarm gets up (~1.5 s), then walks over and stares at it',
+    run: () => {
+      const T = window.__t;
+      const g = T.g;
+      T.setup({ enemies: [T.sentryDef('z', 0, -60, Math.PI, { sleeping: true })], player: { x: 0, z: 5 } });
+      const s = T.s('z');
+      T.run(1);
+      g.bus.emit('alarm:start', { id: 'car', pos: { x: 3, y: 0.8, z: -42 }, duration: 14 });
+      let woke = null, moving = null, arrived = null, stare = null;
+      T.run(20, (t) => {
+        if (woke === null && !s.brain.asleep) woke = t;
+        if (moving === null && s.actualSpeed > 0.5) moving = t;
+        if (arrived === null && T.dist(s, 3, -42) < 5) arrived = t;
+        if (arrived !== null && stare === null && s.brain.phase === 'stare') stare = t;
+        return stare !== null && t > stare + 2;
+      });
+      return {
+        pass: woke !== null && moving !== null && moving - woke >= 1.2 && arrived !== null && s.state === 'alarm',
+        detail: `woke @${woke?.toFixed(1)}s, walking @${moving?.toFixed(1)}s, at the car @${arrived?.toFixed(1)}s, staring @${stare?.toFixed(1)}s, state ${s.state}`,
+      };
+    },
+  },
+  {
+    n: 20,
+    name: 'recovery: a jostled sentry steps back to its post; a patrol frozen mid-leg by a call carries on (no backtracking)',
+    run: () => {
+      const T = window.__t;
+      const g = T.g;
+      // The patrol walks between two points either side of a thick wall with a gap at its east end,
+      // so each leg is a real (cached) path: round the corner, along the wall's end, round again.
+      T.setup({
+        enemies: [
+          T.sentryDef('s', -6, -60),
+          { id: 'p', kind: 'patrol', pos: { x: 0, z: -70 }, route: [{ x: 0, z: -70 }, { x: 0, z: -90 }], pause: 0.5 },
+        ],
+        boxes: [{ x: -1.5, z: -80, w: 15, d: 6, h: 2 }],
+        player: { x: 35, z: 0 },
+      });
+      const s = T.s('s'), p = T.s('p');
+      T.run(2);
+      s.position.x += 2.2; // shoved off its spot
+      T.run(6);
+      const back = T.dist(s, -6, -60);
+      // Wait until the patrol walks the southbound leg again (now from the cache) and is in the gap,
+      // past the path's first corner. A stale cached leg would walk it back to that corner.
+      const cachedLegs = () => g.director.pathCache.has('p:0') && g.director.pathCache.has('p:1');
+      const midLeg = T.run(120, () => cachedLegs() && p.brain.routeIndex === 1 && p.brain.phase === 'walk' && p.position.x > 6 && p.position.z < -79.5 && p.position.z > -81.5);
+      g.bus.emit('leviathan:call:start', { pos: { x: 80, y: 110, z: -100 }, duration: 4.6 });
+      T.run(5);
+      g.bus.emit('leviathan:call:end', {});
+      const stuckBefore = p.stuckEvents;
+      let best = T.dist(p, 0, -90), backtrack = 0, arrived = null;
+      const t1 = T.now();
+      T.run(20, (t) => {
+        const d = T.dist(p, 0, -90);
+        best = Math.min(best, d);
+        backtrack = Math.max(backtrack, d - best);
+        if (arrived === null && d < 0.8) arrived = t - t1;
+        return arrived !== null;
+      });
+      const stuck = p.stuckEvents - stuckBefore;
+      return {
+        pass: back < 0.6 && midLeg && backtrack < 0.5 && arrived !== null && stuck === 0,
+        detail: `sentry ${back.toFixed(2)} m from its post after the shove; patrol mid-leg at the call ${midLeg}, walked back ${backtrack.toFixed(2)} m after it, at its route point ${arrived?.toFixed(1)}s after, stuck ${stuck}`,
       };
     },
   },

@@ -92,6 +92,7 @@ export class Director {
 
   reset() {
     this.pathQueue.length = 0;
+    this.pathCache.clear(); // a respawn may have closed a gate (nav.rebuildArea) under a cached leg
     this.alarms.length = 0;
     this.caughtBy = null;
     this.calling = !!this.game.leviathan?.calling;
@@ -164,7 +165,8 @@ export class Director {
         const d = Math.sqrt(d2) || 0.01;
         const push = (SEPARATION - d) / SEPARATION;
         const nx = d2 > 1e-6 ? dx / d : Math.random() - 0.5, nz = d2 > 1e-6 ? dz / d : Math.random() - 0.5;
-        const wa = a.state === 'grab' ? 0 : 1, wb = b.state === 'grab' ? 0 : 1;
+        // Whoever is walking does most of the stepping aside; a grab never budges.
+        const wa = a.state === 'grab' ? 0 : a.path ? 1 : 0.35, wb = b.state === 'grab' ? 0 : b.path ? 1 : 0.35;
         a.sepX -= nx * push * wa;
         a.sepZ -= nz * push * wa;
         b.sepX += nx * push * wb;
@@ -187,17 +189,19 @@ export class Director {
   // --- sound ---------------------------------------------------------------------------
 
   onNoise(e) {
-    if (!e?.pos) return;
+    if (!e?.pos || !Number.isFinite(e.pos.x) || !Number.isFinite(e.pos.z)) return;
     const source = e.source || 'other';
+    const radius = Number.isFinite(e.radius) ? e.radius : source === 'alarm' ? CONFIG.noise.alarm : 0;
+    if (radius <= 0) return;
     if (source === 'alarm') {
       const a = this.alarmFromNoise(e);
-      this.broadcastAlarm(a, e.radius ?? CONFIG.noise.alarm);
+      this.broadcastAlarm(a, radius);
       return;
     }
     const hearers = [];
     for (const s of this.snatchers) {
       if (!s.active) continue;
-      const c = s.brain.hearing(e.pos, e.radius ?? 0);
+      const c = s.brain.hearing(e.pos, radius);
       if (c >= 0) hearers.push({ s, c, d: Math.hypot(e.pos.x - s.position.x, e.pos.z - s.position.z) });
     }
     if (!hearers.length) return;
@@ -362,6 +366,7 @@ const STATE_COLORS = {
   chase: '#ff3030', search: '#ff6a3a', return: '#6fa8ff', rapture: '#b080ff', grab: '#ff0000',
 };
 const MAX_PATH_SEGMENTS = 512;
+const LABEL_RANGE = 60; // metres: farther labels and cones would only clutter the view (and overdraw)
 
 class DebugView {
   constructor(director) {
@@ -408,7 +413,8 @@ class DebugView {
       const s = it.s;
       const st = s.state;
       const color = STATE_COLORS[st] || '#fff';
-      it.pivot.visible = s.active && st !== 'rapture';
+      const near = Math.hypot(s.position.x - cam.position.x, s.position.z - cam.position.z) < LABEL_RANGE;
+      it.pivot.visible = s.active && near && st !== 'rapture';
       it.pivot.position.set(s.position.x, 0.06, s.position.z);
       it.pivot.rotation.y = s.yaw + s.headYaw;
       it.cone.material.color.set(color);
@@ -421,9 +427,12 @@ class DebugView {
         it.text = text;
         it.label.textContent = text;
       }
-      it.label.style.color = color;
+      if (color !== it.color) {
+        it.color = color;
+        it.label.style.color = color;
+      }
       this.v.set(s.position.x, 2.6, s.position.z).project(cam);
-      const show = s.active && this.v.z < 1 && Math.abs(this.v.x) < 1.2 && Math.abs(this.v.y) < 1.2;
+      const show = s.active && near && this.v.z < 1 && Math.abs(this.v.x) < 1.2 && Math.abs(this.v.y) < 1.2;
       it.label.style.display = show ? 'block' : 'none';
       if (show) it.label.style.transform = `translate(${((this.v.x + 1) / 2) * w - 40}px, ${((1 - this.v.y) / 2) * h - 20}px)`;
     }
@@ -449,6 +458,14 @@ class DebugView {
   dispose() {
     this.el.remove();
     this.game.scene.remove(this.paths);
-    for (const it of this.items) this.game.scene.remove(it.pivot);
+    this.paths.geometry.dispose();
+    this.paths.material.dispose();
+    for (const it of this.items) {
+      this.game.scene.remove(it.pivot);
+      for (const m of [it.cone, it.focus]) {
+        m.geometry.dispose();
+        m.material.dispose();
+      }
+    }
   }
 }

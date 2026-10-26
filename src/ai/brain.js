@@ -21,11 +21,15 @@ export const TUNE = {
   decayDelay: 0.6,
   decay: { calm: 0.25, suspicious: 0.12, investigate: 0.15, return: 0.2, search: 0.04, alarm: 0.25, rapture: 0.1 },
   hearingCap: 0.92, // sound alone never completes a detection: they have to see you
+  soundBend: 2.5, // metres: obstacles narrower than about twice this don't muffle a sound
   sleep: { perception: 0.25, range: 9, cone: 0.7, hearing: 0.6, wakeTime: 1.5, resettle: 6 },
   twitchRate: 20,
   creepSpeed: 0.55,
   chaseRepath: 0.35,
   chaseRepathMove: 1.5,
+  chaseDetour: 25, // metres of path left: beyond this, re-plan at most every chaseDetourRepath s
+  chaseDetourRepath: 1.2,
+  chaseDetourMove: 6,
   chaseLead: 0.3, // seconds of player velocity it aims ahead while it can see you
   searchStartDetection: 0.6,
   searchRadius: 9,
@@ -166,9 +170,11 @@ export class Brain {
       this.percDt = 0;
       this.percTimer = Math.max(0, this.percTimer + (0.9 + Math.random() * 0.2) / TUNE.perceptionHz);
     }
-    if (now < this.wakeUntil) {
-      // Waking up: unfold, lift the head, don't act yet.
-      this.body.halt();
+    const waking = now < this.wakeUntil;
+    this.body.hold = waking;
+    if (waking) {
+      // Waking up: unfold and lift the head first. Whatever woke it (a shout, an alarm) has already
+      // set its errand; the body only starts walking once it's up.
       this.body.lookRel(0, lerp(0.05, -0.6, (this.wakeUntil - now) / TUNE.sleep.wakeTime), 3);
       return;
     }
@@ -238,7 +244,7 @@ export class Brain {
     if (this.senseInCone) {
       const focusHalf = E.focusFov * 0.5;
       const focus = lerp(1, TUNE.peripheryFactor, smoothstep(focusHalf, focusHalf + 0.25, this.senseAngle));
-      const light = lerp(TUNE.light[0], TUNE.light[1], clamp(p.lightLevel ?? 0.2, 0, 1));
+      const light = lerp(TUNE.light[0], TUNE.light[1], clamp(Number.isFinite(p.lightLevel) ? p.lightLevel : 0.2, 0, 1));
       rate = curve(TUNE.distanceCurve, this.senseDist) * focus * this.stanceFactor() * light * this.stateFactor() * vis;
     }
     if (this.senseNear && !p.crouched && (p.mode === 'walk' || p.mode === 'sprint')) rate += TUNE.proximityRate;
@@ -324,8 +330,9 @@ export class Brain {
     return clamp(1 - d / Math.max(r, 0.01), 0, 1);
   }
 
-  // Muffled when something blocks the line from ~1 m above the source to the ear, and also the
-  // line passing over low cover (cars, planters): only buildings and other tall things muffle.
+  // Muffled only by something big: the line from ~1 m above the source to the ear must be blocked,
+  // and so must the line over low cover (cars, planters) and the lines either side of it (sound
+  // bends round poles, statues and kiosks). In practice: buildings and long walls muffle.
   soundOccluded(pos) {
     const world = this.game.world;
     const ear = this.body.getEyePos(_eye);
@@ -334,13 +341,23 @@ export class Brain {
     if (!world.segmentBlocked(_a, ear)) return false;
     _a.set(pos.x, base + 3.2, pos.z);
     _b.set(ear.x, ear.y + 0.8, ear.z);
-    return world.segmentBlocked(_a, _b);
+    if (!world.segmentBlocked(_a, _b)) return false;
+    const dx = ear.x - pos.x, dz = ear.z - pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.5) return true;
+    const ox = (-dz / d) * TUNE.soundBend, oz = (dx / d) * TUNE.soundBend;
+    for (let side = -1; side <= 1; side += 2) {
+      _a.set(pos.x + ox * side, base + 1.5, pos.z + oz * side);
+      _b.set(ear.x + ox * side, ear.y, ear.z + oz * side);
+      if (!world.segmentBlocked(_a, _b)) return false;
+    }
+    return true;
   }
 
   hearPlayer(e, closeness) {
     const now = this.game.time;
     const st = this.state;
-    const loud = e.loudness ?? 0.4;
+    const loud = Number.isFinite(e.loudness) ? clamp(e.loudness, 0, 1) : 0.4;
     if (now < this.ignoreUntil || st === 'grab' || st === 'rapture') return;
     if (this.asleep) {
       if (loud >= 0.35 || closeness > 0.5) this.wake(() => this.enterSuspicious(e.pos, { heard: true }));
@@ -693,6 +710,15 @@ export class Brain {
     const now = this.game.time;
     const g = this.game;
     const b = this.body;
+    const caughtBy = this.director?.caughtBy;
+    if (caughtBy && caughtBy !== b) {
+      // Another one has you: the rest close in slowly and watch (no "lost" while you die).
+      const p = g.player.position;
+      if (Math.hypot(p.x - b.position.x, p.z - b.position.z) > 2.6) b.go(p.x, p.z, E.patrolSpeed, 2.4);
+      else b.halt();
+      b.lookAt(p.x, p.y + g.player.eyeHeight, p.z, 6);
+      return;
+    }
     const since = now - this.lastSeenTime;
     if (since > E.loseSightMemory) {
       this.emit('enemy:lost');
@@ -705,10 +731,15 @@ export class Brain {
     this.extrapolate(since < 0.2 ? TUNE.chaseLead : since, _a);
     const tx = _a.x, tz = _a.z;
     const moved = Math.hypot(tx - this.chaseGoal.x, tz - this.chaseGoal.z);
-    // Straight-line pursuit is free, so it updates every frame; A* re-plans are throttled.
+    // Straight-line pursuit is free, so it updates every frame; A* re-plans are throttled, and on a
+    // long detour (round a block, through the parking structure) small moves of yours don't matter.
     const direct = b.canWalkDirect(tx, tz);
-    if (direct || now >= this.repathAt || moved > TUNE.chaseRepathMove) {
-      if (!direct) this.repathAt = now + TUNE.chaseRepath;
+    const detour = !direct && b.remainingPathLength() > TUNE.chaseDetour;
+    const due = direct || (detour
+      ? (now >= this.repathAt && moved > TUNE.chaseRepathMove) || moved > TUNE.chaseDetourMove
+      : now >= this.repathAt || moved > TUNE.chaseRepathMove);
+    if (due) {
+      if (!direct) this.repathAt = now + (detour ? TUNE.chaseDetourRepath : TUNE.chaseRepath);
       this.chaseGoal.x = tx;
       this.chaseGoal.z = tz;
       b.go(tx, tz, E.chaseSpeed, 0.1, { brake: false });
@@ -718,7 +749,6 @@ export class Brain {
     else b.lookAt(tx, 1.3, tz, 6);
     const d = Math.hypot(p.x - b.position.x, p.z - b.position.z);
     if (d < E.catchRadius && g.state === 'playing' && since < 0.3) this.director?.tryCatch(this);
-    else if (this.director?.caughtBy && this.director.caughtBy !== b && d < 1.8) b.halt();
   }
 
   enterGrab() {
@@ -976,18 +1006,23 @@ export class Brain {
       if (Math.hypot(P.x - b.position.x, P.z - b.position.z) > 0.8) {
         b.go(P.x, P.z, E.patrolSpeed, 0.4);
         this.setPhase('walk');
-      } else this.setPhase('scan');
+      } else this.enterScan();
       return;
     }
     if (this.phase === 'walk') {
       this.calmHead();
       if (b.arrived || b.pathFailed) {
         b.halt();
-        this.setPhase('scan');
+        this.enterScan();
       }
       return;
     }
     this.atPostTime += dt;
+    // Jostled off its spot (a patrol brushing past): step back rather than slowly drift away.
+    if (Math.hypot(this.spotX - b.position.x, this.spotZ - b.position.z) > 1.2 && !this.asleep) {
+      this.setPhase('start');
+      return;
+    }
     if (this.sleeper) {
       b.face(P.yaw);
       if (!this.asleep) {
@@ -1005,6 +1040,12 @@ export class Brain {
     const off = sweep(this.scanPhase) * this.scanArc * 0.5;
     b.face(P.yaw + off * 0.55);
     b.lookRel(off * 0.45, this.kind === 'devout' ? 0.08 : -0.04, 2.5);
+  }
+
+  enterScan() {
+    this.setPhase('scan');
+    this.spotX = this.body.position.x;
+    this.spotZ = this.body.position.z;
   }
 
   // Calm head: mostly forward, an occasional slow glance to one side.
@@ -1074,7 +1115,7 @@ export class Brain {
           this.goRoute();
         }
         break;
-      case 'idle': this.setPhase('scan'); break;
+      case 'idle': this.enterScan(); break;
       case 'investigate': this.setPhase('look'); this.body.halt(); break;
       case 'search': this.setPhase('look'); this.lookDur = 1; this.body.halt(); break;
       case 'alarm': this.setPhase('stare'); this.body.halt(); break;
