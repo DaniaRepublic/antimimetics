@@ -59,6 +59,18 @@ export const PAUSE = {
   sensitivity: 'mouse sensitivity',
   volume: 'volume',
   fov: 'field of view',
+  brightness: 'brightness',
+  relock: 'The browser held on to the mouse for a moment. Click resume again.',
+};
+
+// One-time brightness check on the first click of the title screen.
+export const CALIBRATE = {
+  tag: 'Before the tape starts',
+  title: 'Brightness',
+  body: 'Adjust the brightness until the mark below is only just visible.',
+  aside: 'The dark is where you hide. Keep it dark, just not blind.',
+  hint: 'drag or use the arrow keys · also in the pause menu',
+  go: 'continue',
 };
 
 export const ENDING = {
@@ -89,5 +101,6 @@ export const TUTORIAL = {
   crouch: '[C] crouch — slower, quieter, harder to see',
   throw: '[F] or click to throw a bottle — they walk toward the sound',
   light: 'the eye shows how visible you are — light gives you away',
+  noticed: 'that mark is one of them noticing you — get out of its sight before it fills',
   chase: 'they will not run. [Shift] sprint, break their line of sight, then hide',
 };

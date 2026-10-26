@@ -202,6 +202,42 @@ window.renderIR = async (key, { data = false } = {}) => {
   return stats;
 };
 
+// Renders a synth dry three times in parallel (full band, highpassed at 200 Hz and at 400 Hz,
+// 24 dB/oct) and returns the RMS (dBFS) of the loudest 1 s of each: what small speakers keep.
+window.bandSplit = async (name, opts = {}) => {
+  const secs = name === 'leviathanCall' ? 8 : name === 'swell' ? 6 : 4;
+  const ctx = new OfflineAudioContext(3, SR * secs, SR);
+  warmBanks(ctx);
+  const merger = ctx.createChannelMerger(3);
+  merger.connect(ctx.destination);
+  const out = ctx.createGain();
+  out.connect(merger, 0, 0);
+  for (const [f, ch] of [[200, 1], [400, 2]]) {
+    let node = out;
+    for (let k = 0; k < 2; k++) {
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = f;
+      node.connect(hp);
+      node = hp;
+    }
+    node.connect(merger, 0, ch);
+  }
+  SYNTHS[name](new Builder(ctx, out, 0.05), opts);
+  const buf = await ctx.startRendering();
+  const loudest = (d) => {
+    const win = SR;
+    let best = 0;
+    for (let i = 0; i + win <= d.length; i += SR / 10) {
+      let e = 0;
+      for (let j = i; j < i + win; j++) e += d[j] * d[j];
+      best = Math.max(best, e / win);
+    }
+    return best > 0 ? +(10 * Math.log10(best)).toFixed(2) : -120;
+  };
+  return { full: loudest(buf.getChannelData(0)), hi200: loudest(buf.getChannelData(1)), hi400: loudest(buf.getChannelData(2)) };
+};
+
 window.SYNTH_NAMES = Object.keys(SYNTHS);
 window.__game = { sandbox: 'audio' };
 document.getElementById('boot')?.remove();

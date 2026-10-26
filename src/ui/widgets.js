@@ -473,25 +473,28 @@ export class MessageToasts {
 }
 
 // First-zone sequence, shown in order, one at a time. A step whose action the player has
-// already performed (`learned`) is skipped without being shown.
+// already performed (`learned`) is skipped without being shown. None starts while something is
+// hunting the player: that moment belongs to the chase tip.
+const calm = (g) => !(g.director?.chasing > 0) && !((g.director?.threat ?? 0) > 0.5);
 const SEQUENCE = [
   {
-    id: 'move', ready: (g, s) => s.playTime > 2.5 && (g.level?.currentZone ?? 0) <= 0,
+    id: 'move', ready: (g, s) => s.playTime > 2.5 && (g.level?.currentZone ?? 0) <= 0 && calm(g),
     learned: (g, s) => s.moved > 6, done: (g, s) => s.moved > 6, min: 3.5, max: 11,
   },
   {
-    id: 'crouch', ready: (g, s) => s.playTime > 6 && s.idle > 1.6 && (g.level?.currentZone ?? 0) <= 1,
+    id: 'crouch', ready: (g, s) => s.playTime > 6 && s.idle > 1.6 && (g.level?.currentZone ?? 0) <= 1 && calm(g),
     learned: (g, s) => s.crouchedOnce, done: (g) => !!g.player?.crouched, min: 3, max: 12,
   },
   {
-    id: 'throw', ready: (g, s) => s.idle > 1.2 && (g.player?.bottles ?? 0) > 0,
+    id: 'throw', ready: (g, s) => s.idle > 1.2 && (g.player?.bottles ?? 0) > 0 && calm(g),
     learned: (g, s) => s.thrown, done: (g, s) => s.thrown, min: 3.5, max: 13,
   },
 ];
 const ALWAYS = () => true;
 const CONTEXTUAL = {
   light: { min: 4.5, max: 6, done: ALWAYS, expires: 5 },
-  chase: { min: 4, max: 6, done: ALWAYS, expires: 5 },
+  noticed: { min: 4.5, max: 6.5, done: ALWAYS, expires: 4, urgent: 1 },
+  chase: { min: 4, max: 6, done: ALWAYS, expires: 5, urgent: 2 },
 };
 const ZONE_HINT = { min: 5, max: 7, done: ALWAYS, expires: 30 };
 
@@ -516,14 +519,28 @@ export class Tutorial {
     this.queue.push({ id, text, spec, at: this.playTime, delay });
   }
 
-  // Built-in contextual tip ('light', 'chase').
+  // Built-in contextual tip ('light', 'noticed', 'chase'). An urgent one goes first and cuts
+  // short whatever less urgent text is on screen: it is about what is happening right now.
   trigger(id) {
-    this.enqueue(id, TUTORIAL[id], CONTEXTUAL[id]);
+    const spec = CONTEXTUAL[id];
+    if (!spec?.urgent || this.seen.has(id) || this.current?.id === id) {
+      this.enqueue(id, TUTORIAL[id], spec);
+      return;
+    }
+    this.queue = this.queue.filter((q) => q.id !== id);
+    this.queue.unshift({ id, text: TUTORIAL[id], spec, at: this.playTime, delay: 0 });
+    this.queue.sort((a, b) => (b.spec.urgent ?? 0) - (a.spec.urgent ?? 0));
+    if (this.current && this.current.out < 0 && (this.current.spec.urgent ?? 0) < spec.urgent) {
+      // Not counted as seen: an interrupted lesson comes back later.
+      if (!this.current.spec.urgent && this.current.t < this.current.spec.min) this.seen.delete(this.current.id);
+      this.current.out = 0;
+      this.current.fast = true;
+    }
   }
 
   // A level-authored zone hint, shown a few seconds after entering the zone.
   zoneHint(index, text) {
-    this.enqueue(`zone:${index}`, String(text ?? '').trim(), ZONE_HINT, 3.5);
+    this.enqueue(`zone:${index}`, String(text ?? '').trim(), { ...ZONE_HINT, zone: index }, 3.5);
   }
 
   // busy: another text channel (a level message) is on screen; new hints wait for it so the
@@ -548,8 +565,13 @@ export class Tutorial {
     if ((p?.lightLevel ?? 0) > 0.55 && this.playTime > 5) this.trigger('light');
 
     // A tip that could not be shown soon after its moment has passed is dropped.
-    if (this.queue.length) this.queue = this.queue.filter((q) => !q.spec.expires || this.playTime - q.at < q.spec.expires);
-    if (!this.current && this.idle > 0.8 && this.quiet > 0.8) {
+    // ...and so is a zone's hint once the player has left that zone.
+    const zone = game.level?.currentZone;
+    const stale = (spec) => spec.zone != null && zone != null && zone !== spec.zone;
+    if (this.queue.length) this.queue = this.queue.filter((q) => (!q.spec.expires || this.playTime - q.at < q.spec.expires) && !stale(q.spec));
+    if (this.current && this.current.out < 0 && stale(this.current.spec)) this.current.out = 0;
+    const urgent = this.queue[0]?.spec.urgent;
+    if (!this.current && (urgent || (this.idle > 0.8 && this.quiet > 0.8))) {
       const i = this.queue.findIndex((q) => this.playTime - q.at >= q.delay);
       if (i >= 0) {
         const q = this.queue.splice(i, 1)[0];
@@ -564,9 +586,10 @@ export class Tutorial {
     if (c.out < 0 && ((c.t > c.spec.min && c.spec.done(game, this)) || c.t > c.spec.max)) c.out = 0;
     let a = Math.min(1, c.t / 0.6);
     if (c.out >= 0) {
+      const fade = c.fast ? 0.2 : 0.7;
       c.out += dt;
-      a *= Math.max(0, 1 - c.out / 0.7);
-      if (c.out >= 0.7) {
+      a *= Math.max(0, 1 - c.out / fade);
+      if (c.out >= fade) {
         this.current = null;
         this.idle = 0;
       }

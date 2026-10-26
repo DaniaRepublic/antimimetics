@@ -127,7 +127,8 @@ export class HeartbeatLayer extends Layer {
     const b = this.b;
     this.osc = b.osc('sine', 50);
     this.env = b.gain(0);
-    b.chain(this.osc, this.env, b.shaper(driveCurve(ctx, 2.2)), b.filter('lowpass', 180, 0.7), b.gain(0.8), this.level);
+    // Driven hard enough that its harmonics (150-400 Hz) carry the beat on small speakers.
+    b.chain(this.osc, this.env, b.shaper(driveCurve(ctx, 3.2)), b.filter('lowpass', 380, 0.6), b.gain(0.75), this.level);
     this.level.gain.value = 1;
     this.next = 0;
   }

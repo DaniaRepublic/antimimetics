@@ -1,17 +1,61 @@
 // Full-screen states: title, intro, pause, dead and the ending. Each screen is shown/hidden by
 // the Hud on game:state and advanced by update(dt).
 import { clamp } from '../core/math.js';
-import { el, keycaps, setText, toggleClass } from './dom.js';
+import { el, keycaps, setAttr, setText, svgEl, toggleClass } from './dom.js';
 import { Typewriter } from './typewriter.js';
-import { CONTROLS, DEAD, DEATH_LINES, ENDING, INTRO, PAUSE, TITLE } from './text.js';
+import { CALIBRATE, CONTROLS, DEAD, DEATH_LINES, ENDING, INTRO, PAUSE, TITLE } from './text.js';
 import { formatClock } from './widgets.js';
 
 // Seconds before a resumed/retried pointer lock is allowed: browsers refuse to re-lock
-// for about a second after the player leaves lock with Esc.
+// for about a second after the player leaves lock with Esc. Measured in real time as well as
+// game time (whichever is further along): game time runs slow when frames are slow (dt is
+// clamped), but the browser's cooldown does not.
 export const RESUME_DELAY = 1.2;
 export const RETRY_DELAY = 1.1;
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 const SLIDER_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+
+// Brightness (game.settings.brightness, 0.5..2, 1 = as graded): the atmosphere applies it as a
+// display gamma of 1 / brightness, so the calibration mark gets the same curve.
+export const BRIGHTNESS = { min: 0.5, max: 2, step: 0.05, fallback: 1 };
+const MARK_LEVEL = 0.035; // display value of the calibration mark at brightness 1 (~9/255)
+const formatBrightness = (v) => `${Math.round(v * 100)}%`;
+
+// A labelled range input bound to game.settings[key]; saves on every change.
+function settingSlider(game, parent, { label, key, min, max, step, fallback, format, onChange }) {
+  const wrap = el('label', 'wic-slider', parent);
+  el('span', 'wic-slider__label', wrap, label);
+  const value = el('span', 'wic-slider__value', wrap);
+  const input = el('input', 'wic-range', wrap);
+  Object.assign(input, { type: 'range', min: String(min), max: String(max), step: String(step) });
+  const paint = (v) => {
+    value.textContent = format(v);
+    input.style.setProperty('--p', `${(((v - min) / (max - min)) * 100).toFixed(1)}%`);
+    onChange?.(v);
+  };
+  // The game's input layer cancels arrow keys at window level while playing; keep them for a
+  // focused slider in a menu.
+  input.addEventListener('keydown', (e) => {
+    if (SLIDER_KEYS.has(e.code) && game.state !== 'playing') e.stopPropagation();
+  });
+  input.addEventListener('input', () => {
+    const v = clamp(parseFloat(input.value), min, max);
+    paint(v);
+    if (!game.settings) game.settings = {};
+    game.settings[key] = v;
+    game.saveSettings?.();
+  });
+  return {
+    input,
+    sync: (settings) => {
+      const raw = Number(settings?.[key]);
+      const v = clamp(Number.isFinite(raw) ? raw : fallback, min, max);
+      input.value = String(v);
+      paint(v);
+    },
+  };
+}
 
 function controlsList(parent) {
   const list = el('ul', 'wic-controls', parent);
@@ -43,7 +87,13 @@ class Screen {
 
   show() {
     this.visible = true;
+    this.shownAt = now();
     this.el.classList.add('is-on');
+  }
+
+  // Seconds this screen has been up (real time or game time, whichever is larger).
+  get age() {
+    return Math.max(this.game.stateTime ?? 0, (now() - (this.shownAt ?? now())) / 1000);
   }
 
   hide() {
@@ -78,6 +128,58 @@ export class TitleScreen extends Screen {
     const foot = el('div', 'wic-title__foot', inner);
     el('span', 'wic-title__begin', foot, TITLE.begin);
     el('span', 'wic-title__phones', foot, TITLE.phones);
+    this.buildCalibration();
+    this.calibrating = false;
+  }
+
+  // One-time brightness check, shown in place of the title text on the first click.
+  buildCalibration() {
+    const c = el('div', 'wic-calib', this.el);
+    el('div', 'wic-calib__tag', c, CALIBRATE.tag);
+    el('h2', 'wic-calib__title', c, CALIBRATE.title);
+    el('p', 'wic-calib__body', c, CALIBRATE.body);
+    const swatch = el('div', 'wic-calib__swatch', c);
+    const svg = svgEl('svg', { class: 'wic-calib__mark', viewBox: '-30 -16 60 32', 'aria-hidden': 'true' }, swatch);
+    this.markShapes = [
+      svgEl('path', { d: 'M-24,0 Q0,-22 24,0 Q0,16 -24,0 Z', fill: 'none', 'stroke-width': 2.2 }, svg),
+      svgEl('circle', { cx: 0, cy: -1.5, r: 6.5, stroke: 'none' }, svg),
+    ];
+    this.calibSlider = settingSlider(this.game, c, {
+      label: PAUSE.brightness, key: 'brightness', ...BRIGHTNESS, format: formatBrightness, onChange: (v) => this.paintMark(v),
+    });
+    el('p', 'wic-calib__aside', c, CALIBRATE.aside);
+    const foot = el('div', 'wic-calib__foot', c);
+    this.calibGo = button(foot, CALIBRATE.go, () => this.hud.finishCalibration());
+    el('span', 'wic-calib__hint', foot, CALIBRATE.hint);
+  }
+
+  paintMark(brightness) {
+    const v = Math.round(255 * MARK_LEVEL ** (1 / clamp(brightness, BRIGHTNESS.min, BRIGHTNESS.max)));
+    const col = `rgb(${v},${Math.round(v * 0.93)},${Math.round(v * 0.9)})`;
+    setAttr(this.markShapes[0], 'stroke', col);
+    setAttr(this.markShapes[1], 'fill', col);
+  }
+
+  // Arrow keys while calibrating, whatever has focus.
+  nudgeBrightness(dir) {
+    const input = this.calibSlider.input;
+    const v = clamp(parseFloat(input.value) + dir * BRIGHTNESS.step, BRIGHTNESS.min, BRIGHTNESS.max);
+    input.value = String(+v.toFixed(2));
+    input.dispatchEvent(new Event('input'));
+  }
+
+  startCalibration() {
+    this.calibrating = true;
+    this.calibSlider.sync(this.game.settings);
+    toggleClass(this.el, 'is-calib', true);
+    // Arrow keys work at once; a click elsewhere on the screen does nothing while calibrating.
+    this.calibSlider.input.focus({ preventScroll: true });
+  }
+
+  hide() {
+    super.hide();
+    this.calibrating = false;
+    toggleClass(this.el, 'is-calib', false);
   }
 }
 
@@ -155,48 +257,19 @@ export class PauseScreen extends Screen {
     const panel = el('div', 'wic-pause__panel', this.el);
     this.tag = el('div', 'wic-pause__tag', panel, PAUSE.tag);
     el('h2', 'wic-pause__title', panel, PAUSE.title);
+    this.note = el('div', 'wic-pause__note', panel, PAUSE.relock);
     const menu = el('div', 'wic-menu', panel);
     this.resumeBtn = button(menu, PAUSE.resume, () => hud.resume());
     this.restartBtn = button(menu, PAUSE.restart, () => hud.restart());
     const settings = el('div', 'wic-settings', panel);
+    const slider = (label, key, min, max, step, fallback, format) => settingSlider(this.game, settings, { label, key, min, max, step, fallback, format });
     this.sliders = [
-      this.slider(settings, PAUSE.sensitivity, 'sensitivity', 0.3, 3, 0.05, 1, (v) => `${v.toFixed(2)}×`),
-      this.slider(settings, PAUSE.volume, 'volume', 0, 1, 0.01, 0.8, (v) => `${Math.round(v * 100)}%`),
-      this.slider(settings, PAUSE.fov, 'fov', 60, 95, 1, 72, (v) => `${Math.round(v)}°`),
+      slider(PAUSE.brightness, 'brightness', BRIGHTNESS.min, BRIGHTNESS.max, BRIGHTNESS.step, BRIGHTNESS.fallback, formatBrightness),
+      slider(PAUSE.sensitivity, 'sensitivity', 0.3, 3, 0.05, 1, (v) => `${v.toFixed(2)}×`),
+      slider(PAUSE.volume, 'volume', 0, 1, 0.01, 0.8, (v) => `${Math.round(v * 100)}%`),
+      slider(PAUSE.fov, 'fov', 60, 95, 1, 72, (v) => `${Math.round(v)}°`),
     ];
     controlsList(panel);
-  }
-
-  slider(parent, label, key, min, max, step, fallback, format) {
-    const wrap = el('label', 'wic-slider', parent);
-    el('span', 'wic-slider__label', wrap, label);
-    const value = el('span', 'wic-slider__value', wrap);
-    const input = el('input', 'wic-range', wrap);
-    Object.assign(input, { type: 'range', min: String(min), max: String(max), step: String(step) });
-    const paint = (v) => {
-      value.textContent = format(v);
-      input.style.setProperty('--p', `${(((v - min) / (max - min)) * 100).toFixed(1)}%`);
-    };
-    // The game's input layer cancels arrow keys at window level; keep them for a focused slider.
-    input.addEventListener('keydown', (e) => {
-      if (SLIDER_KEYS.has(e.code) && this.game.state === 'paused') e.stopPropagation();
-    });
-    input.addEventListener('input', () => {
-      const v = clamp(parseFloat(input.value), min, max);
-      paint(v);
-      const game = this.game;
-      if (!game.settings) game.settings = {};
-      game.settings[key] = v;
-      game.saveSettings?.();
-    });
-    return {
-      sync: (settings) => {
-        const raw = Number(settings?.[key]);
-        const v = clamp(Number.isFinite(raw) ? raw : fallback, min, max);
-        input.value = String(v);
-        paint(v);
-      },
-    };
   }
 
   show() {
@@ -207,11 +280,17 @@ export class PauseScreen extends Screen {
     if (zone) parts.push(zone);
     setText(this.tag, parts.join('  ·  '));
     for (const s of this.sliders) s.sync(g.settings);
+    toggleClass(this.note, 'is-on', !!this.relockFailed);
+    this.relockFailed = false;
     this.update();
   }
 
+  get ready() {
+    return this.visible && this.age >= RESUME_DELAY;
+  }
+
   update() {
-    const wait = (this.game.stateTime ?? 0) < RESUME_DELAY;
+    const wait = !this.ready;
     if (this.resumeBtn.disabled !== wait) {
       this.resumeBtn.disabled = wait;
       this.restartBtn.disabled = wait;
@@ -238,7 +317,7 @@ export class DeadScreen extends Screen {
   }
 
   get ready() {
-    return (this.game.stateTime ?? 0) > RETRY_DELAY;
+    return this.visible && this.age > RETRY_DELAY;
   }
 
   update() {

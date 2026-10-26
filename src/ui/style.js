@@ -164,11 +164,16 @@ const CSS = `
   text-shadow: 0 0 2px #000, 0 0 16px rgba(0, 0, 0, 0.95);
 }
 
-/* tutorial hints */
+/* tutorial hints (a soft dark backing: they often sit over bright mist or a lamp) */
 .wic-tut {
   position: absolute; left: 50%; bottom: 104px; width: max-content; max-width: calc(100vw - 32px);
   transform: translateX(-50%); text-align: center; opacity: 0;
-  font: 12px/2 var(--wic-mono); letter-spacing: 0.08em; color: var(--wic-ink-dim); text-shadow: var(--wic-shadow);
+  font: 12px/2 var(--wic-mono); letter-spacing: 0.08em; color: rgba(var(--wic-ink-rgb), 0.86);
+  text-shadow: 0 0 2px #000, 0 0 10px rgba(0, 0, 0, 0.9);
+}
+.wic-tut::before {
+  content: ''; position: absolute; inset: -14px -8%; z-index: -1;
+  background: radial-gradient(ellipse at center, rgba(var(--wic-night-rgb), 0.6) 0%, rgba(var(--wic-night-rgb), 0) 72%);
 }
 .wic-tut .wic-kbd { margin: 0 0.2em; }
 
@@ -183,8 +188,9 @@ const CSS = `
 .wic-rec__mark { margin-top: 11px; display: flex; align-items: center; gap: 9px; opacity: 0; letter-spacing: 0.22em; text-transform: uppercase; font-size: 10.5px; }
 .wic-rec__diamond { width: 6px; height: 6px; transform: rotate(45deg); border: 1px solid var(--wic-ink); }
 
+/* (at the very top: it shows at the start of play in an embed, when the zone card is up at 13vh) */
 .wic-notice {
-  position: absolute; left: 50%; top: 10vh; transform: translateX(-50%);
+  position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
   width: max-content; max-width: calc(100vw - 32px); padding: 9px 16px;
   border: 1px solid rgba(var(--wic-ink-rgb), 0.22); background: rgba(var(--wic-night-rgb), 0.72);
   font: 12px/1.5 var(--wic-mono); letter-spacing: 0.06em; text-align: center; opacity: 0;
@@ -259,6 +265,33 @@ const CSS = `
 }
 .wic-title__begin::before { content: ''; display: inline-block; width: 22px; height: 1px; margin-right: 14px; vertical-align: 0.3em; background: var(--wic-red); }
 .wic-title__phones { font: 10.5px/1 var(--wic-mono); letter-spacing: 0.26em; text-transform: uppercase; color: var(--wic-ink-faint); }
+.wic-title__inner { transition: opacity 0.6s ease; }
+
+/* one-time brightness check, in place of the title text */
+.wic-title.is-calib { cursor: default; }
+.wic-title.is-calib .wic-title__inner { opacity: 0; visibility: hidden; transition: opacity 0.45s ease, visibility 0s linear 0.45s; }
+.wic-calib {
+  position: absolute; left: clamp(20px, 7vw, 124px); top: 50%; transform: translateY(-50%);
+  width: min(430px, calc(100vw - 40px)); max-height: calc(100% - 32px); overflow-y: auto;
+  opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0s linear 0.4s;
+}
+.wic-title.is-calib .wic-calib { opacity: 1; visibility: visible; transition: opacity 0.8s ease 0.35s; }
+.wic-calib__tag { display: flex; align-items: center; gap: 10px; font: 10.5px/1.3 var(--wic-mono); letter-spacing: 0.26em; text-transform: uppercase; color: var(--wic-red); }
+.wic-calib__tag::before { content: ''; flex: none; width: 8px; height: 8px; background: var(--wic-red); }
+.wic-calib__title { margin: 16px 0 14px; font-size: clamp(26px, 3.4vw, 40px); font-weight: 400; line-height: 1; letter-spacing: 0.24em; }
+.wic-calib__body { margin: 0 0 18px; font-size: 15px; line-height: 1.55; letter-spacing: 0.02em; color: var(--wic-ink-dim); }
+.wic-calib__swatch {
+  display: flex; align-items: center; justify-content: center; height: 128px; margin-bottom: 18px;
+  background: #000; border: 1px solid rgba(var(--wic-ink-rgb), 0.14);
+}
+.wic-calib__mark { width: 116px; height: 62px; overflow: visible; }
+.wic-calib .wic-slider { margin-bottom: 16px; }
+.wic-calib__aside { margin: 0 0 22px; font-size: 13px; font-style: italic; line-height: 1.5; color: var(--wic-ink-dim); }
+.wic-calib__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 26px; }
+.wic-calib .wic-btn { width: auto; padding-left: 28px; color: var(--wic-ink); letter-spacing: 0.24em; }
+.wic-calib .wic-btn::before { width: 18px; }
+.wic-calib .wic-btn:hover:not(:disabled), .wic-calib .wic-btn:focus-visible { padding-left: 34px; }
+.wic-calib__hint { font: 10px/1.5 var(--wic-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--wic-ink-faint); }
 
 /* intro */
 .wic-intro {
@@ -292,6 +325,11 @@ const CSS = `
 }
 .wic-pause__tag { display: flex; align-items: center; gap: 10px; font: 10.5px/1.3 var(--wic-mono); letter-spacing: 0.26em; text-transform: uppercase; color: var(--wic-red); }
 .wic-pause__tag::before { content: ''; flex: none; width: 8px; height: 8px; background: var(--wic-red); }
+.wic-pause__note {
+  display: none; margin: -6px 0 16px; padding-left: 12px; border-left: 1px solid var(--wic-red);
+  font: 11.5px/1.5 var(--wic-mono); letter-spacing: 0.04em; color: var(--wic-ink);
+}
+.wic-pause__note.is-on { display: block; }
 .wic-pause__title { margin: 16px 0 24px; font-size: clamp(28px, 4vw, 46px); font-weight: 400; letter-spacing: 0.3em; line-height: 1; }
 .wic-menu { display: flex; flex-direction: column; gap: 2px; margin-bottom: 24px; }
 .wic-btn {
@@ -397,12 +435,16 @@ const CSS = `
   88.4% { opacity: 0; transform: translate(0, 0); }
 }
 
+@media (max-width: 860px) {
+  .wic-notice { top: 36px; } /* below the REC tag once they would meet */
+}
 @media (max-width: 640px) {
   .wic-title__shade {
     background:
       linear-gradient(0deg, rgba(var(--wic-night-rgb), 0.97) 0%, rgba(var(--wic-night-rgb), 0.88) 58%, rgba(var(--wic-night-rgb), 0.3) 100%);
   }
   .wic-title__inner { left: 20px; right: 20px; bottom: 26px; }
+  .wic-calib { left: 20px; width: calc(100vw - 40px); }
   .wic-title__name { letter-spacing: 0.12em; margin-top: 22px; }
   .wic-title__file { letter-spacing: 0.2em; }
   .wic-controls { grid-template-columns: repeat(2, max-content); row-gap: 7px; }

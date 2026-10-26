@@ -2,7 +2,7 @@
 // toasts, ripples...) at desktop and phone sizes, then drives the click flow
 // title -> intro -> playing -> paused -> playing -> dead -> playing. Fails on any console error.
 //
-//   node tools/check-hud.mjs [--no-build] [--out dist/shots/hud] [--only desktop|phone] [--query quality=0]
+//   node tools/check-hud.mjs [--no-build] [--out dist/shots/hud] [--only desktop|phone|flow] [--query quality=0]
 //
 // --query appends URL params to every page (e.g. quality=0 to speed up SwiftShader once the
 // real atmosphere is merged; frames of the full scene can take seconds each headless).
@@ -232,7 +232,13 @@ async function flow() {
   const waitStateTime = (s) => h.page.waitForFunction((t) => window.__game.stateTime > t, s, { timeout: 300000 });
   await waitStateTime(0.3);
   await h.page.mouse.click(640, 360);
-  check((await state()) === 'intro', 'title click -> intro');
+  check((await state()) === 'title' && (await h.eval(() => window.__game.hud.screens.title.calibrating)), 'first title click -> brightness check');
+  await h.page.keyboard.press('ArrowRight');
+  const bright = await h.eval(() => window.__game.settings.brightness);
+  check(Math.abs(bright - 1.05) < 1e-6, `arrow key nudges brightness (${bright})`);
+  await h.page.keyboard.press('ArrowLeft');
+  await h.page.keyboard.press('Enter');
+  check((await state()) === 'intro', 'enter on the brightness check -> intro');
   await waitStateTime(0.6);
   await h.page.keyboard.press('Space');
   check((await state()) === 'playing', 'space skips intro -> playing');
@@ -243,7 +249,7 @@ async function flow() {
   await waitStateTime(1.25);
   // The input layer cancels arrow keys at window level; a focused slider must still take them.
   const fov0 = await h.eval(() => window.__game.settings.fov);
-  await h.page.focus('.wic-pause .wic-slider:nth-of-type(3) .wic-range');
+  await h.page.focus('.wic-pause .wic-slider:nth-of-type(4) .wic-range');
   await h.page.keyboard.press('ArrowRight');
   const fov1 = await h.eval(() => window.__game.settings.fov);
   check(fov1 === Math.min(95, fov0 + 1), `arrow keys adjust a focused slider (fov ${fov0} -> ${fov1})`);
@@ -254,11 +260,22 @@ async function flow() {
     const g = window.__game;
     g.caughtBy = g.director.snatchers[0] || null;
     g.setState('caught');
+    g.simulate(2.8); // (not real frames: a loaded machine can drop to a frame every few seconds)
   });
-  await h.page.waitForFunction(() => window.__game.state === 'dead', null, { timeout: 300000 });
-  await h.page.mouse.click(640, 360);
-  check((await state()) === 'dead', 'retry ignores an immediate click');
-  await waitStateTime(1.2);
+  check((await state()) === 'dead', 'caught -> dead');
+  // A click the moment the dead screen comes up (dispatched in the same task, so slow headless
+  // frames can't make it "late") must not skip it.
+  const early = await h.eval(() => {
+    const g = window.__game;
+    // (through 'caught' so the dead screen is shown afresh: re-entering the same state is a
+    // no-op for the HUD, and its real-time clock would still count from the simulated entry)
+    g.setState('caught');
+    g.setState('dead');
+    window.dispatchEvent(new MouseEvent('click', { button: 0 }));
+    return g.state;
+  });
+  check(early === 'dead', 'retry ignores an immediate click');
+  await h.eval(() => window.__game.simulate(1.2));
   await h.page.keyboard.press('Enter');
   check((await state()) === 'playing', 'enter on dead screen -> respawn');
   const canvasHit = await h.eval(() => document.elementFromPoint(640, 360) === window.__game.renderer.domElement);
@@ -344,7 +361,7 @@ for (const vp of VIEWPORTS) {
   await screens(vp);
   await debugOverlay(vp);
 }
-if (!only) {
+if (!only || only === 'flow') {
   await flow();
   await tutorial();
 }
