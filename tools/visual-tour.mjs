@@ -6,8 +6,11 @@
 //   node tools/visual-tour.mjs [--no-build] [--quality 2] [--only z1,title,...] [--out dir]
 //                              [--hud] [--stats] [--html dist/index.html] [--death-fix]
 //
-// The game loop is frozen while shooting (the tour advances time itself), so every image is
-// deterministic up to the AI's Math.random idles. Prints luminance stats per image with --stats.
+// The game loop is frozen while shooting (the tour advances time itself, placing the camera before
+// each tick as the frame loop would, so the light pool serves the viewpoint being shot), so every
+// image is deterministic up to the AI's Math.random idles. --only matches name prefixes (the
+// close-up section is 'snatcher', the get-up 'sleeper', the catch 'death', the call 'call').
+// Prints luminance stats per image with --stats; pair two runs with tools/visual-compare.mjs.
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';

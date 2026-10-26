@@ -430,7 +430,7 @@ function getClothMaterial() {
     side: THREE.DoubleSide,
     alphaTest: 0.5,
   });
-  m.defines = { ATMO_FOG_SILHOUETTE: FOG_SILHOUETTE };
+  m.defines = { ...m.defines, ATMO_FOG_SILHOUETTE: FOG_SILHOUETTE };
   m.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <emissivemap_fragment>',
@@ -466,7 +466,7 @@ function makeSkinMaterial(variant, layout, seed) {
     emissiveIntensity: SKIN_GLOW,
     roughness: 0.48,
     metalness: 0,
-    defines: { ATMO_FOG_SILHOUETTE: FOG_SILHOUETTE },
+    defines: { STANDARD: '', ATMO_FOG_SILHOUETTE: FOG_SILHOUETTE }, // (replaces the material's own defines object)
   });
 }
 

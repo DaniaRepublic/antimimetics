@@ -53,6 +53,8 @@ function heartbeat(x) {
 //   fog gets height fog whose colour matches the sky behind it. Tall things (the leviathan) thin
 //   out of it naturally. Custom ShaderMaterials get the same by merging UniformsLib.fog and
 //   including all four fog chunks; without the extra uniforms they fall back to plain FogExp2.
+//   A material may set defines.ATMO_FOG_SILHOUETTE (0..1): it then takes only that share of the
+//   fog up to ~35 m (full again by ~75 m), so it stays a dark shape in the mist (the snatchers).
 // - registerLightSource: `intensity` is a three.js PointLight intensity (candela, decay 2),
 //   e.g. burning barrel ~30, street lamp ~60. The returned handle gains `level` (current
 //   flicker x on/off, 0..1) for syncing emissive meshes. Only the 6 most relevant sources get
