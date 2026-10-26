@@ -24,7 +24,11 @@
     position: fixed; inset: 0; display: grid; place-items: center;
     color: var(--ink-dim); letter-spacing: 0.3em; font-size: 12px;
   }
+  /* Keeps pulsing on the compositor while the city is built in one long synchronous task. */
+  #boot span { animation: boot-pulse 1.6s ease-in-out infinite; }
+  @keyframes boot-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { #boot span { animation: none; } }
 </style>
 <div id="app"></div>
-<div id="boot">LOADING</div>
+<div id="boot" role="status"><span>LOADING</span></div>
 <!-- BUNDLE -->

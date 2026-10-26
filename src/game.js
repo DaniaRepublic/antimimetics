@@ -167,7 +167,10 @@ export class Game {
     this.bus.on('player:caught', (e) => this.onCaught(e));
     this.bus.on('level:checkpoint', (e) => this.setCheckpoint(e.checkpoint));
     this.bus.on('level:exit', () => this.win());
-    this.bus.on('enemy:alert', () => this.stats.spotted++);
+    // A chase that resumes after the leviathan's call re-emits enemy:alert ({resumed: true}); count first sightings only.
+    this.bus.on('enemy:alert', (e) => {
+      if (!e?.resumed) this.stats.spotted++;
+    });
     // Esc (the browser drops the lock) pauses; an exit the game asked for itself does not.
     this.bus.on('input:unlock', (e) => {
       if (this.state === 'playing' && !e?.requested) this.pause();

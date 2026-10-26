@@ -27,7 +27,7 @@ class Builder {
     const lit = { aLit: 2 };
     // Heavy materials (facades, concrete, metal, paint) are sliced every 90 m so the slices behind
     // the camera cull; light ones are merged whole (a draw call costs more than their vertices).
-    const whole = Object.fromEntries(['chain', 'store', 'storeLit', 'shopsigns', 'decal', 'puddle', 'emissive', 'glass',
+    const whole = Object.fromEntries(['chain', 'store', 'storeLit', 'storeGlow', 'shopsigns', 'decal', 'puddle', 'emissive', 'glass',
       'graffiti', 'road', 'paving', 'pavers', 'grass', 'water', 'signs', 'asphalt'].map((k) => [k, Infinity]));
     this.batch = new Batch({
       chunkSize: 90,

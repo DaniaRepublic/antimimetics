@@ -34,7 +34,7 @@ const TUNE = {
   maskTime: 0.8,
   needleBox: 0.3, // collider width (m) around a needle planted in the street; 0 disables
   needleBoxH: 2.2, // ...covering its lean up to about head height
-  maxNeedleBoxes: 600, // CollisionWorld cannot delete boxes; lifted feet only disable theirs
+  maxNeedleBoxes: 600, // only without CollisionWorld.updateBox: each leg otherwise recycles one box
 };
 
 // Legs that must not be in the air at the same time (opposite leg, same-side neighbours).
@@ -186,6 +186,7 @@ export class Leviathan {
       lag: 0,
       bias: rng() * 3,
       collider: null, // CollisionWorld box while the needle stands in the street
+      box: null, // this leg's box, kept (disabled) while the foot is lifted and moved on the next plant
       boxPending: false,
     }));
     this.needleBoxes = 0;
@@ -407,16 +408,24 @@ export class Leviathan {
     const f = leg.foot, a = leg.ankle;
     const rise = a.y - f.y;
     if (leg.swing || f.y > 0.3 || rise < 1 || TUNE.needleBox <= 0) return;
-    if (!world?.addBox || this.needleBoxes >= TUNE.maxNeedleBoxes) return;
+    if (!world?.addBox) return;
     const k = TUNE.needleBoxH / rise;
     const ox = (a.x - f.x) * k, oz = (a.z - f.z) * k;
     const off = Math.hypot(ox, oz);
-    this.needleBoxes++;
-    leg.collider = world.addBox({
+    const shape = {
       x: f.x + ox / 2, z: f.z + oz / 2, y: f.y, h: TUNE.needleBoxH,
       w: TUNE.needleBox + off, d: TUNE.needleBox, rot: off > 1e-4 ? Math.atan2(-oz, ox) : 0,
-      blocksMove: true, blocksSight: false, tag: 'leviathan-foot',
-    });
+    };
+    if (leg.box && world.updateBox) {
+      // Recycle this leg's box: the world keeps exactly one collider per leg however long it walks.
+      world.updateBox(leg.box, shape);
+      world.setEnabled(leg.box, true);
+    } else {
+      if (!world.updateBox && this.needleBoxes >= TUNE.maxNeedleBoxes) return;
+      this.needleBoxes++;
+      leg.box = world.addBox({ ...shape, blocksMove: true, blocksSight: false, tag: 'leviathan-foot' });
+    }
+    leg.collider = leg.box;
   }
 
   clearNeedleBox(leg) {

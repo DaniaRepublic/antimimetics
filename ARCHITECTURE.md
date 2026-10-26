@@ -34,10 +34,10 @@ scenario tests through `window.__game`.
 | Field | Type | Notes |
 |---|---|---|
 | `scene`, `camera`, `renderer` | three.js | camera is a child of scene (attach view-model objects to it) |
-| `bus` | `EventBus` | `on(type, fn) -> unsubscribe`, `emit(type, payload)` |
+| `bus` | `EventBus` | `on(type, fn) -> unsubscribe`, `emit(type, payload)`, `listenerCount(type)`; a throwing listener does not stop the others |
 | `input` | `Input` | `down(code)`, `pressed(code)`, `mouseDown(b)`, `mousePressed(b)`, `locked`, `pointerLockFailed` |
-| `world` | `CollisionWorld` | `addBox({x,z,w,d,h,y,rot,blocksMove,blocksSight,tag,data})`, `resolveCircle`, `segmentBlocked`, `raycast`, `query`, `setEnabled`, `pointBlocked` |
-| `nav` | `NavGrid` | built **after** `level.build()`; `findPath`, `isWalkable`, `nearestWalkable`, `lineWalkable`, `randomPointNear`, `sameRegion`, `rebuildArea` |
+| `world` | `CollisionWorld` | `addBox({x,z,w,d,h,y,rot,blocksMove,blocksSight,tag,data})`, `updateBox(col, shape)`, `removeBox(col)`, `resolveCircle`, `segmentBlocked`, `raycast`, `query`, `setEnabled`, `pointBlocked` |
+| `nav` | `NavGrid` | built **after** `level.build()`; Jump Point Search with precomputed jump tables: `findPath(from, to, {maxExpansions})`, `findPathReference` (plain A*), `stats`, `isWalkable`, `nearestWalkable`, `lineWalkable`, `randomPointNear`, `sameRegion`, `rebuildArea` (the only way the grid may change after `build()`) |
 | `player` | `Player` | `position` (feet), `yaw`, `pitch`, `velocity`, `speed`, `mode` (`idle/crouch/walk/sprint`), `crouched`, `sprinting`, `stamina`, `exhausted`, `lightLevel`, `bottles`, `eyeHeight`, `focus` (interactable), `holdProgress`, `getEyePos(out)`, `getChestPos(out)`, `forward(out)`, `addShake(0..1)` |
 | `projectiles` | `Projectiles` | `throwBottle(origin, vel)`, `createBottleMesh()` (reuse for pickups) |
 | `atmosphere` | `Atmosphere` | see below |
@@ -50,15 +50,20 @@ scenario tests through `window.__game`.
 | `stateTime` | number | seconds since entering the state |
 | `time` | number | simulated seconds (advances in playing/caught/won and title/intro) |
 | `noiseMask` | 0..1 | written by the leviathan each frame; player noise radius × (1 − 0.75·mask) |
-| `settings` | `{sensitivity, volume, fov}` | persisted via `game.saveSettings()` |
+| `settings` | `{sensitivity, volume, fov, brightness, calibrated}` | persisted via `game.saveSettings()` (validated on load); `brightness` 0.5–2 is the grade's gamma, `calibrated` = first-play brightness check done |
 | `stats` | `{spotted, deaths, playTime}` | |
 | `checkpoint` | checkpoint object | current respawn point |
 | `debug`, `god` | bool | URL `?debug`, `?god` |
 | `begin()`, `startPlaying()`, `pause()`, `resume()`, `respawn()` | | called by the HUD from user gestures |
 | `simulate(seconds, step)` | | headless: tick without rendering |
-| `teleport(x, z, yaw)`, `debugCamera` | | test helpers |
+| `teleport(x, z, yaw)`, `debugCamera` | | test helpers (teleport ignores non-finite input) |
+| `stop()` / `start()` | | halt / resume the real-time loop (tools drive `simulate()` instead) |
+| `errorLog` | array | failures caught outside `?debug` (each system's update and the render are guarded; one failing system does not freeze the game) |
+| `bootTimings`, `perfReport()`, `resetPerf()` | | startup and per-system timings (`?profile`) |
+| `contextLost`, `renderFallback` | bool | WebGL context loss shows a notice and pauses; repeated post-processing failure falls back to a plain render |
 
-URL params: `autostart` (skip title), `cp=N` (start at checkpoint N), `god`, `debug`, `mute`.
+URL params: `autostart` (skip title), `cp=N` (start at checkpoint N), `god`, `debug`, `mute`, `quality=0|1|2`
+(pin the atmosphere's post-processing quality; otherwise it steps down automatically when fps < 38), `profile`.
 
 **Frame order (playing):** `player.update → level.update → leviathan.update → director.update →
 projectiles.update → atmosphere.update → audio.update → hud.update → render (atmosphere.render())`.
@@ -85,7 +90,7 @@ calls `level.resetDynamic(cp)` and `director.reset()`.
 | `leviathan:footfall` | `{pos: Vector3, intensity 0..1 (at player)}` | leviathan |
 | `leviathan:call:start` / `leviathan:call:end` | `{pos, duration}` / `{pos}` | leviathan |
 | `enemy:suspicious` | `{enemy, pos}` (first notices something) | director/snatcher |
-| `enemy:alert` | `{enemy, pos}` (spotted player, starts chase, shrieks) | director/snatcher |
+| `enemy:alert` | `{enemy, pos, resumed?}` (spotted player, starts chase, shrieks; `resumed` = a chase re-acquired right after a call — not a new sighting) | director/snatcher |
 | `enemy:lost` | `{enemy}` (chase → search) | director/snatcher |
 | `enemy:giveup` | `{enemy}` (search → return) | director/snatcher |
 | `enemy:step` | `{enemy, pos, chasing}` (footstep, for audio) | snatcher |
@@ -95,6 +100,7 @@ calls `level.resetDynamic(cp)` and `director.reset()`.
 | `level:exit` | `{}` | level |
 | `level:message` | `{text, duration}` (graffiti read, hint) | level |
 | `gate:open` | `{id, pos}` | level |
+| `input:unlock` | `{requested}` (`requested` = the game released the lock itself, not the player pressing Esc) | input |
 | `game:state` | `{state, prev}` | game |
 | `game:checkpoint` / `game:respawn` / `game:won` | `{checkpoint}` / `{checkpoint}` / `{stats}` | game |
 
@@ -160,7 +166,11 @@ class Atmosphere {
   via emissive sprites/halos the level provides.
 - Sky: dark crimson zenith → glowing red/orange horizon, cloud bands; matches fog colour.
 - Mist: layered, drifting, low-lying; ash/ember particles around the camera.
-- Post: bloom (subtle), film grain, vignette, slight chromatic aberration, colour grade.
+- Post chain (as built): scene into an MSAA HalfFloat target with depth → volumetric mist (half-res) → bloom
+  (composite only) → one grade pass that adds bloom, applies ACES + sRGB (no separate OutputPass), then grain,
+  vignette, aberration, threat/death effects and `settings.brightness` as gamma.
+- Material define `ATMO_FOG_SILHOUETTE` (0..1): share of fog a material takes up to ~35 m (snatchers use 0.32 so they
+  stay readable silhouettes), full fog again by ~75 m.
 
 ### Leviathan — `src/world/leviathan.js`
 
@@ -207,6 +217,7 @@ class Director {
   reset()                       // all snatchers back to spawn, calm
   getIndicators() -> [{ enemy, detection 0..1, bearing (radians relative to camera forward, + = left),
                         state, distance }]
+  hunting                       // number chasing, grabbing, or frozen mid-chase by a call (checkpoints wait for 0)
 }
 class Snatcher {
   id, def, position: Vector3, yaw, state, detection 0..1, root (THREE.Object3D)
@@ -237,7 +248,9 @@ class AudioEngine {
 }
 ```
 Everything procedural (oscillators, filtered noise, generated impulse-response reverb, PannerNode
-for positional sources). Must be silent and error-free before `init()` and when `?mute`.
+for positional sources). Must be silent and error-free before `init()` and when `?mute`. Also unlocks itself on the
+first user gesture. Mix buses: `amb, levi, call, enemy, player, props, body, music, fx` (the call ducks the rest);
+`stats()` / `meter()` for tools.
 
 ### HUD — `src/ui/hud.js`
 
@@ -255,6 +268,15 @@ play again → reload). In-game: crosshair dot, directional detection indicators
 hold progress, zone title cards (`zone:enter`), hint toasts (`level:message`), checkpoint toast,
 pointer-lock fallback notice ("drag to look"), `?debug` overlay (fps, pos, zone, enemy states).
 Minimal, diegetic-feeling, typewriter/mono type, never cluttered.
+
+## Tooling notes
+
+- `tools/harness.mjs` stubs pointer lock by default (headless Chromium grants it without a click and then leaks
+  ~150 MB per rendered frame); pass `pointerLock: true` to opt in, `iframe: 'allow-scripts'` to embed sandboxed.
+- Run browser-based tools one at a time on small machines; long simulations should call `game.stop()` first.
+- `tools/playtest.mjs` is an input-driving bot with intended/careless policies per zone; `tools/playtest-flow.mjs`
+  checks death cam, respawn resets, alarm throws, checkpoints and the win flow.
+- Avoid `Math.hypot` in per-particle / per-cell loops (V8 does not inline it; it allocates).
 
 ## Performance budget
 

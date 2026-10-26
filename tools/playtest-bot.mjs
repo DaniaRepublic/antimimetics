@@ -501,6 +501,8 @@ export function installBot([CFG, { fastModels = true } = {}]) {
     g.input.reset();
     B.held.clear();
     B.press.clear();
+    // game.respawn() is refused from 'won' (the real game reloads to play again), so leave it first.
+    if (g.state === 'won') g.setState('dead');
     g.respawn();
     g.player.pitch = 0;
   };

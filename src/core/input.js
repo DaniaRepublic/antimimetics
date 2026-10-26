@@ -21,6 +21,7 @@ export class Input {
     this.lookDY = 0;
     this.locked = false;
     this.everLocked = false;
+    this.skipLook = 0;
     this.pointerLockFailed = false;
     this.dragging = false;
     this.enabled = true;
@@ -58,8 +59,16 @@ export class Input {
     window.addEventListener('mousemove', (e) => {
       if (!this.enabled) return;
       if (this.locked) {
-        this.lookDX += e.movementX || 0;
-        this.lookDY += e.movementY || 0;
+        const mx = e.movementX || 0, my = e.movementY || 0;
+        // Chrome can report one huge movement right after (re)capturing the mouse, which yanks
+        // the view; skip the first events after a lock and any single absurd jump.
+        if (this.skipLook > 0) {
+          this.skipLook--;
+          return;
+        }
+        if (Math.abs(mx) > 400 || Math.abs(my) > 400) return;
+        this.lookDX += mx;
+        this.lookDY += my;
       } else if (this.dragging && this.pointerLockFailed) {
         this.lookDX += e.clientX - this.lastX;
         this.lookDY += e.clientY - this.lastY;
@@ -74,6 +83,7 @@ export class Input {
       if (this.locked) {
         this.everLocked = true;
         this.pointerLockFailed = false;
+        if (!was) this.skipLook = 2;
       }
       // `requested`: the game released the lock itself (a menu opened). The exit lands
       // asynchronously, possibly after the game has already resumed, so listeners must not treat

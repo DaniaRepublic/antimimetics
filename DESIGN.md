@@ -36,10 +36,14 @@ Goal: **get out of the city without being caught.** No combat. You can hide, sne
 | Light | Firelight / working streetlights make you much easier to see. Shadows halve detection. |
 | Noise | Sprint footsteps are loud (~17 m), walking moderate (~7.5 m), crouch-walking almost silent (~2 m). Exhausted panting is audible. |
 | Bottles | Pick up (E), throw (left click / F). Shatter = loud noise (~20 m). Snatchers walk over to investigate. Max 3 carried. |
-| Car alarms | Some cars have a blinking red alarm LED. Hit one with a bottle → alarm wails ~14 s, audible ~48 m. Every snatcher who hears it goes to it and stands there staring while it wails. |
+| Car alarms | Some cars have a blinking red alarm LED. Hit one with a bottle (generous hit box; a smash within 2 m counts) → alarm wails ~14 s, audible ~48 m. Every snatcher who hears it goes to it and stands there staring while it wails. Re-arms a few seconds after it stops. |
 | The Call | Every so often the Leviathan calls (~4.6 s). **All snatchers freeze, turn toward it and look up — they are blind and deaf to you while it calls.** Its calls are frequent when it is close. Its footfalls (deep booms + camera shake) briefly mask your footsteps too. |
 | Chase | A snatcher that fully detects you shrieks (alerting others within ~26 m to investigate) and chases at a fast walk (3.9 m/s). Walking (3.0) can't escape; sprinting (6.0, ~5 s stamina) can. Break line of sight, then hide/crouch: it goes to where it last saw you, then searches nearby for ~14 s, then gives up and returns to its post. |
 | Caught | Within ~1.1 m of a chasing snatcher = caught. Short horrifying grab → respawn at the zone's checkpoint. |
+| After a call | A chaser frozen by a call that sees you again within ~4 s of it ending resumes at once; others search where you were heading. |
+| Checkpoints | A checkpoint only saves while nothing is hunting you; cross one mid-chase and it saves once you shake them off. |
+| Solid | Snatchers are solid — you cannot slip through one. |
+| Sleepers | One snatcher sits slumped in the parking structure. It barely perceives a crouching player but wakes to noise or someone walking past upright. |
 
 ## Route (north = −Z). Player starts near z = 0 and exits around z ≈ −430.
 

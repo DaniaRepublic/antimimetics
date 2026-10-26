@@ -189,7 +189,7 @@ export class CapeSim {
         if (billow > 0) {
           // Flapping updraught: waves run round the hem, lifting it and throwing it outward.
           const rx = P[kx] - ox, rz = P[kx + 2] - oz;
-          const rl = Math.hypot(rx, rz) || 1;
+          const rl = Math.sqrt(rx * rx + rz * rz) || 1;
           const flap = 0.5 + 0.5 * Math.sin(time * 3.4 - i * 1.3 + j * 0.5 + k * 0.17);
           const b = billow * (0.25 + 0.75 * flap) * (0.6 + 0.8 * noise1(time * 2.3 + i * 1.1, k + 3)) * (j / (this.rows - 1));
           wx += (rx / rl) * 2.6 * b;
@@ -199,9 +199,8 @@ export class CapeSim {
         let ax = drag * (wx - vx / h), ay = drag * (wy - vy / h) - 9.8, az = drag * (wz - vz / h);
         // Weak shape memory: hang the rest shape from the pinned top, upright in world space.
         const top = i * 3;
-        _v.set(R[kx] - R[top], R[kx + 1] - R[top + 1], R[kx + 2] - R[top + 2]).transformDirection(M).multiplyScalar(
-          Math.hypot(R[kx] - R[top], R[kx + 1] - R[top + 1], R[kx + 2] - R[top + 2]) * scale,
-        );
+        const rdx = R[kx] - R[top], rdy = R[kx + 1] - R[top + 1], rdz = R[kx + 2] - R[top + 2];
+        _v.set(rdx, rdy, rdz).transformDirection(M).multiplyScalar(Math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz) * scale);
         const ks = 7;
         ax += ks * (P[top] + _v.x - P[kx]);
         ay += ks * (P[top + 1] + _v.y - P[kx + 1]);
@@ -237,7 +236,7 @@ export class CapeSim {
         const rest = L[l + 2] * scale, stiff = L[l + 3];
         const ax = a * 3, bx = b * 3;
         const dx = P[bx] - P[ax], dy = P[bx + 1] - P[ax + 1], dz = P[bx + 2] - P[ax + 2];
-        const d = Math.hypot(dx, dy, dz) || 1e-6;
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6; // not Math.hypot: it boxes its arguments (GC churn)
         // Cross links may bunch up (folds) but not stretch.
         if (stiff < 1 && d < rest && d > rest * 0.55) continue;
         const diff = ((d - rest) / d) * stiff;
