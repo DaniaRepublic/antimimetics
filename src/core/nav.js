@@ -275,7 +275,8 @@ export class NavGrid {
     return ix >= 0 && iz >= 0 && ix < this.w && iz < this.h && this.walk[iz * this.w + ix] === 1;
   }
 
-  findPath(from, to, { maxExpansions = 40000 } = {}) {
+  // heuristicWeight > 1 trades a little path optimality for far fewer expansions on long detours.
+  findPath(from, to, { maxExpansions = 40000, heuristicWeight = 1.2 } = {}) {
     const start0 = this.nearestWalkable(from.x, from.z, 6);
     const goal0 = this.nearestWalkable(to.x, to.z, 12);
     if (!start0 || !goal0) return null;
@@ -319,7 +320,7 @@ export class NavGrid {
           seen[ni] = id;
           g[ni] = ng;
           parent[ni] = c;
-          heap.push(ni, ng + hfn(ni) * 1.001);
+          heap.push(ni, ng + hfn(ni) * heuristicWeight);
         }
       }
     }

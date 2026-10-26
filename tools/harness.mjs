@@ -41,7 +41,7 @@ export async function launch({ html = 'dist/index.html', query = 'autostart', wi
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // Two rAFs so any camera change made by the caller is rendered.
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    await page.screenshot({ path: file });
+    await page.screenshot({ path: file, timeout: 180000 });
     return file;
   };
 

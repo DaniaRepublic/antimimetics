@@ -6,7 +6,7 @@
 
 const GAME_KEYS = new Set([
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyC', 'KeyE', 'KeyQ', 'KeyF', 'KeyR',
-  'ShiftLeft', 'ShiftRight', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab',
+  'ShiftLeft', 'ShiftRight', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
 ]);
 
 export class Input {
@@ -20,6 +20,7 @@ export class Input {
     this.lookDX = 0;
     this.lookDY = 0;
     this.locked = false;
+    this.everLocked = false;
     this.pointerLockFailed = false;
     this.dragging = false;
     this.enabled = true;
@@ -27,7 +28,8 @@ export class Input {
     this.lastY = 0;
 
     window.addEventListener('keydown', (e) => {
-      if (GAME_KEYS.has(e.code)) e.preventDefault();
+      // Only swallow keys while playing, so menus keep arrow-key sliders and Tab focus.
+      if (this.enabled && GAME_KEYS.has(e.code)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
       this.pressedKeys.add(e.code);
@@ -67,13 +69,14 @@ export class Input {
     document.addEventListener('pointerlockchange', () => {
       const was = this.locked;
       this.locked = document.pointerLockElement === this.el;
+      if (this.locked) {
+        this.everLocked = true;
+        this.pointerLockFailed = false;
+      }
       if (was && !this.locked) this.bus.emit('input:unlock');
       if (!was && this.locked) this.bus.emit('input:lock');
     });
-    document.addEventListener('pointerlockerror', () => {
-      this.pointerLockFailed = true;
-      this.bus.emit('input:lockfailed');
-    });
+    document.addEventListener('pointerlockerror', () => this.lockRefused());
   }
 
   // Must be called from a user gesture (click). Falls back silently.
@@ -81,17 +84,18 @@ export class Input {
     if (this.locked) return;
     try {
       const p = this.el.requestPointerLock?.();
-      if (p && typeof p.catch === 'function') {
-        p.catch(() => {
-          this.pointerLockFailed = true;
-          this.bus.emit('input:lockfailed');
-        });
-      } else if (!this.el.requestPointerLock) {
-        this.pointerLockFailed = true;
-      }
+      if (p && typeof p.catch === 'function') p.catch(() => this.lockRefused());
+      else if (!this.el.requestPointerLock) this.lockRefused();
     } catch {
-      this.pointerLockFailed = true;
+      this.lockRefused();
     }
+  }
+
+  // A refusal after a successful lock is temporary (browsers refuse re-locking for ~1 s after
+  // Esc), so only switch to drag-to-look when the lock has never worked in this session.
+  lockRefused() {
+    if (!this.everLocked) this.pointerLockFailed = true;
+    this.bus.emit('input:lockfailed');
   }
 
   releaseLock() {
