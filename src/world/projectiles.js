@@ -8,11 +8,11 @@ const ALARM_PAD = 0.6;
 const ALARM_PAD_Y = 0.9;
 const _dir = new THREE.Vector3();
 
-// The alarm car (collider with data.alarmCar) whose padded box contains p, if any.
-function alarmCarAt(world, p) {
+// The alarm car (collider with data.alarmCar) whose padded box contains p, if any (`skip` excepted).
+function alarmCarAt(world, p, skip = null) {
   const pad = ALARM_PAD;
   for (const col of world.query(p.x - pad, p.z - pad, p.x + pad, p.z + pad)) {
-    if (!col.enabled || !col.data?.alarmCar) continue;
+    if (!col.enabled || !col.data?.alarmCar || col === skip) continue;
     if (p.y > col.maxY + ALARM_PAD_Y) continue;
     const dx = p.x - col.cx, dz = p.z - col.cz;
     const lx = col.cos * dx - col.sin * dz;
@@ -61,6 +61,9 @@ export class Projectiles {
       vel: velocity.clone(),
       spin: new THREE.Vector3(Math.random() * 12 - 6, Math.random() * 4, Math.random() * 12 - 6),
       age: 0,
+      // Thrown from right beside an alarm car (crouched behind it as cover): only a real hit on
+      // that car counts, or every throw from there would shatter in your hand and set it off.
+      padSkip: alarmCarAt(this.game.world, origin),
     });
   }
 
@@ -80,7 +83,7 @@ export class Projectiles {
         collider = hit.collider;
       } else {
         p.pos.addScaledVector(p.vel, dt);
-        const car = alarmCarAt(world, p.pos);
+        const car = alarmCarAt(world, p.pos, p.padSkip);
         if (car) {
           impact = p.pos.clone().setY(Math.min(p.pos.y, car.maxY));
           collider = car;

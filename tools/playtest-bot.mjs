@@ -385,6 +385,16 @@ export function installBot([CFG, { fastModels = true } = {}]) {
     const pos = new window.__THREE_V(pl.position.x + fwd.x * 0.4, pl.position.y + pl.eyeHeight + fwd.y * 0.4 - 0.15, pl.position.z + fwd.z * 0.4);
     const vel = new window.__THREE_V(fwd.x * P.throwSpeed + pl.velocity.x * 0.5, fwd.y * P.throwSpeed + P.throwUp, fwd.z * P.throwSpeed + pl.velocity.z * 0.5);
     const dir = new window.__THREE_V();
+    // (mirrors Projectiles: alarm cars have a padded hit box, except the one thrown from beside)
+    const padCar = (q, skip) => {
+      for (const col of g.world.query(q.x - 0.6, q.z - 0.6, q.x + 0.6, q.z + 0.6)) {
+        if (!col.enabled || !col.data?.alarmCar || col === skip || q.y > col.maxY + 0.9) continue;
+        const dx = q.x - col.cx, dz = q.z - col.cz;
+        if (Math.abs(col.cos * dx - col.sin * dz) <= col.hx + 0.6 && Math.abs(col.sin * dx + col.cos * dz) <= col.hz + 0.6) return col;
+      }
+      return null;
+    };
+    const skip = padCar(pos, null);
     for (let age = 0; age < 6; age += DT) {
       vel.y -= 9.8 * DT;
       const step = vel.length() * DT;
@@ -392,12 +402,8 @@ export function installBot([CFG, { fastModels = true } = {}]) {
       const hit = g.world.raycast(pos, dir, step, { filter: (c) => c.blocksMove || c.blocksSight });
       if (hit) return { x: hit.point.x, y: hit.point.y, z: hit.point.z, collider: hit.collider };
       pos.addScaledVector(vel, DT);
-      // (mirrors Projectiles: alarm cars have a padded hit box)
-      for (const col of g.world.query(pos.x - 0.6, pos.z - 0.6, pos.x + 0.6, pos.z + 0.6)) {
-        if (!col.enabled || !col.data?.alarmCar || pos.y > col.maxY + 0.9) continue;
-        const dx = pos.x - col.cx, dz = pos.z - col.cz;
-        if (Math.abs(col.cos * dx - col.sin * dz) <= col.hx + 0.6 && Math.abs(col.sin * dx + col.cos * dz) <= col.hz + 0.6) return { x: pos.x, y: pos.y, z: pos.z, collider: col };
-      }
+      const col = padCar(pos, skip);
+      if (col) return { x: pos.x, y: pos.y, z: pos.z, collider: col };
       if (pos.y <= 0.03) return { x: pos.x, y: 0.03, z: pos.z, collider: null };
     }
     return { x: pos.x, y: pos.y, z: pos.z, collider: null };

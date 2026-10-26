@@ -508,10 +508,11 @@ export class Level {
         game.bus.emit('zone:enter', { index: zi, zone: this.zones[zi] });
       }
     }
-    // A checkpoint saves when you cross into its area -- but not while something is chasing you:
-    // then it saves as soon as you shake them off anywhere beyond its line (north of the area's
-    // south edge, in its zone or later). Dragging a pack across the line doesn't bank progress.
-    const hunted = (game.director?.chasing ?? 0) > 0;
+    // A checkpoint saves when you cross into its area -- but not while something is chasing you
+    // (a call only pauses a chase): then it saves as soon as you shake them off anywhere beyond
+    // its line (north of the area's south edge, in its zone or later). Dragging a pack across the
+    // line doesn't bank progress.
+    const hunted = (game.director?.hunting ?? game.director?.chasing ?? 0) > 0;
     for (const cp of this.checkpoints) {
       if (this.reached.has(cp.id) || !cp.area || hunted) continue;
       const past = p.z < cp.area.maxZ && zi >= (cp.zone ?? 0);

@@ -141,6 +141,15 @@ export class Brain {
     return !CALM.has(this.state);
   }
 
+  // After you: chasing or grabbing, or a chaser the call has frozen (or that will take the chase
+  // straight back up if it sees you in the moments after). Checkpoints don't save meanwhile.
+  get hunting() {
+    const st = this.state;
+    if (st === 'chase' || st === 'grab') return true;
+    if (st === 'rapture') return this.resume?.state === 'chase';
+    return st === 'search' && this.game.time < this.reacquireUntil;
+  }
+
   get slumpTarget() {
     if (this.asleep) return this.state === 'rapture' ? 0.6 : 1;
     return 0;

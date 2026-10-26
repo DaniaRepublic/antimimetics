@@ -96,6 +96,7 @@ export class Snatcher {
     this.arriveDist = 0.5;
     this.brake = true;
     this.clearHops();
+    this.unreachable = null;
     this.cacheKey = null;
     this.faceYaw = null;
     this.dirX = 0;

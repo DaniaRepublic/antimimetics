@@ -225,8 +225,9 @@ for (const zone of zones) {
             g.player.crouched = crouch;
             for (let i = 0; i < 15; i++) tick();
             // Can the player see the car from here (a throw at something hidden doesn't count)?
+            // (The aim point is inside the car's own collider, which must not count as cover.)
             const eye = g.player.getEyePos(new window.__THREE_V());
-            if (g.world.segmentBlocked(eye, new window.__THREE_V(c.cx, 0.9, c.cz))) continue;
+            if (g.world.segmentBlocked(eye, new window.__THREE_V(c.cx, 0.9, c.cz), { ignore: c })) continue;
             const d = Math.hypot(c.cx - x, c.cz - z);
             g.player.pitch = mode === 'flat' ? 0 : Math.atan2(0.75 - eye.y, d);
             g.player.bottles = 1;
@@ -241,11 +242,44 @@ for (const zone of zones) {
         }
       }
     }
+    // Crouched right against the car (using it as cover), throwing along it or away from it:
+    // the bottle must not count as hitting the car it was thrown from beside.
+    out.beside = [0, 0];
+    const shortX = c.hx < c.hz;
+    for (const side of [-1, 1]) {
+      for (const dir of [[0, 1], [0, -1], [side, 0]]) {
+        const off = (shortX ? c.hx : c.hz) + 0.4;
+        const lx = shortX ? side * off : 0, lz = shortX ? 0 : side * off;
+        const x = c.cx + c.cos * lx + c.sin * lz, z = c.cz - c.sin * lx + c.cos * lz;
+        // dir is in car-local axes: [across, along] (across = away from the car on this side)
+        const ax = shortX ? dir[0] : dir[1], az = shortX ? dir[1] : dir[0];
+        const wx = c.cos * ax + c.sin * az, wz = -c.sin * ax + c.cos * az;
+        L.stopAlarm(a, true);
+        g.teleport(x, z, Math.atan2(-wx, -wz));
+        g.player.crouched = true;
+        for (let i = 0; i < 15; i++) tick();
+        g.player.pitch = 0.2;
+        g.player.bottles = 1;
+        const before = started;
+        let landed = null;
+        const un = g.bus.on('bottle:shatter', (e) => { landed = landed || e.pos; });
+        g.input.pressedKeys.add('KeyF');
+        for (let i = 0; i < 75; i++) tick();
+        un();
+        // (a bottle that smashes within a couple of metres of the car -- on a canopy pillar, say --
+        // fairly sets it off: only count throws that landed well away)
+        if (!landed || L.constructor.distToCollider(landed, c) < 3) continue;
+        out.beside[1]++;
+        if (started > before) out.beside[0]++;
+      }
+    }
     L.stopAlarm(a, true);
     return out;
   });
-  check(r.aimed[0] === r.aimed[1], `aimed at the car: ${r.aimed[0]}/${r.aimed[1]} set the alarm off`);
-  check(r.flat[0] === r.flat[1], `flat throws: ${r.flat[0]}/${r.flat[1]} set it off${r.misses.length ? ' (missed: ' + r.misses.slice(0, 8).join(', ') + ')' : ''}`);
+  // (at least a few throws from each kind: an empty sample is a broken test, not a pass)
+  check(r.aimed[1] >= 8 && r.aimed[0] === r.aimed[1], `aimed at the car: ${r.aimed[0]}/${r.aimed[1]} set the alarm off`);
+  check(r.flat[1] >= 8 && r.flat[0] === r.flat[1], `flat throws: ${r.flat[0]}/${r.flat[1]} set it off${r.misses.length ? ' (missed: ' + r.misses.slice(0, 8).join(', ') + ')' : ''}`);
+  check(r.beside[1] >= 4 && r.beside[0] === 0, `throws away from the car while crouched right beside it: ${r.beside[0]}/${r.beside[1]} set it off (none should)`);
   errors = errors.concat(h.errors);
   await h.close();
 }

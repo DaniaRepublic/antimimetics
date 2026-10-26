@@ -21,6 +21,7 @@ export class Director {
     this.snatchers = [];
     this.threat = 0;
     this.chasing = 0;
+    this.hunting = 0; // chasing, or only paused by the call (src/world/level.js: checkpoints)
     this.calling = false;
     this.callEndsAt = 0;
     this.callPos = new THREE.Vector3();
@@ -60,6 +61,7 @@ export class Director {
     this.separate();
     let threat = 0;
     let chasing = 0;
+    let hunting = 0;
     for (const s of this.snatchers) {
       if (s.active) s.update(dt);
       else s.updateDormant(dt);
@@ -69,9 +71,11 @@ export class Director {
         chasing++;
         threat = 1;
       } else if (s.detection > threat) threat = s.detection;
+      if (s.brain.hunting) hunting++;
     }
     this.threat = threat;
     this.chasing = chasing;
+    this.hunting = hunting;
     this.game.atmosphere?.setThreat?.(threat);
     this.debugView?.update();
     const ms = performance.now() - t0;
@@ -109,6 +113,7 @@ export class Director {
     }
     this.threat = 0;
     this.chasing = 0;
+    this.hunting = 0;
   }
 
   dispose() {
