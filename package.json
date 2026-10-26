@@ -8,7 +8,12 @@
     "build": "node build.mjs",
     "watch": "node build.mjs --watch --serve",
     "serve": "node build.mjs --serve",
-    "smoke": "node tools/smoke.mjs"
+    "smoke": "node tools/smoke.mjs",
+    "robust": "node tools/robust-nav.mjs && node tools/robust-embed.mjs",
+    "robust:session": "node tools/robust-session.mjs",
+    "perf:nav": "node tools/perf-nav.mjs",
+    "perf:startup": "node tools/perf-startup.mjs",
+    "perf:systems": "node tools/perf-systems.mjs"
   },
   "dependencies": {
     "three": "0.170.0"

@@ -5,10 +5,13 @@
 //   nav.build();
 //   nav.findPath({x, z}, {x, z}) -> [{x, z}, ...]  (smoothed; excludes the start; ends at goal) or null
 //
-// findPath uses Jump Point Search (8-connected, no corner cutting): on this grid a long detour
-// (e.g. round the closed gate through the parking structure, ~150 m) costs well under a
-// millisecond instead of the 7-25 ms plain A* needed. findPathReference() keeps the plain A*
-// (used as a fallback and by tools/perf-nav.mjs). Call rebuildArea() after toggling colliders.
+// findPath uses Jump Point Search (8-connected, no corner cutting) with precomputed straight jump
+// distances (JPS+): on the level grid the long detour round the closed gate through the parking
+// structure (~150 m) costs ~1 ms instead of the 7-25 ms plain A* needed; mean query ~0.15 ms.
+// Paths are optimal on the grid, then string-pulled as before. findPathReference() keeps the plain
+// A* (the fallback, and the reference for tools/robust-nav.mjs / tools/perf-nav.mjs).
+// The walkable grid must only change through build() / rebuildArea() (call it after toggling
+// colliders, e.g. the gate): both rebuild the region labels and the jump tables.
 
 const SQRT2 = Math.SQRT2;
 const NEIGHBOURS = [
