@@ -9,6 +9,8 @@ import { buildCity } from './level-layout.js';
 import { cylX } from './props.js';
 
 const ALARM_DURATION = 14;
+const ALARM_REARM = 6; // seconds after an alarm stops before the car can be set off again
+const GATE_SWING = 1.75; // radians the gate leaves swing open
 const _v = new THREE.Vector3();
 const _w = new THREE.Vector3();
 
@@ -22,7 +24,15 @@ class Builder {
     this.world = level.game.world;
     this.rng = makeRng(20261025);
     const lit = { aLit: 2 };
-    this.batch = new Batch({ chunkSize: 90, extras: { facade_brick: lit, facade_concrete: lit, facade_stone: lit } });
+    // Heavy materials (facades, concrete, metal, paint) are sliced every 90 m so the slices behind
+    // the camera cull; light ones are merged whole (a draw call costs more than their vertices).
+    const whole = Object.fromEntries(['chain', 'store', 'storeLit', 'shopsigns', 'decal', 'puddle', 'emissive', 'glass',
+      'graffiti', 'road', 'paving', 'pavers', 'grass', 'water', 'signs', 'asphalt'].map((k) => [k, Infinity]));
+    this.batch = new Batch({
+      chunkSize: 90,
+      chunkSizes: { ...whole, skyline: 400 },
+      extras: { facade_brick: lit, facade_concrete: lit, facade_stone: lit },
+    });
     this.glow = new GlowSprites();
     this.flames = new Flames();
     this.smoke = new Smoke();
@@ -280,6 +290,7 @@ export class Level {
       active: false,
       t: 0,
       noiseT: 0,
+      rearmT: 0,
     };
     this.alarms.push(a);
   }
@@ -307,10 +318,13 @@ export class Level {
     this.game.bus.emit('alarm:start', { id: a.id, pos: a.pos.clone(), duration: ALARM_DURATION });
   }
 
+  // rearm = true re-arms at once (respawn); otherwise the alarm resets itself after a short
+  // pause and its LED starts blinking again, so a failed attempt can be retried with another bottle.
   stopAlarm(a, rearm) {
     const was = a.active;
     a.active = false;
     a.armed = rearm;
+    a.rearmT = rearm ? 0 : ALARM_REARM;
     a.light.handle.enabled = false;
     for (const h of a.hazards) this.builder.glow.set(h, 0);
     this.builder.glow.set(a.led, 0);
@@ -335,6 +349,9 @@ export class Level {
       } else if (a.armed) {
         // The tell: a small red LED on the dash, blinking slowly.
         glow.set(a.led, (this.time + a.id.length * 0.37) % 1.3 < 0.16 ? 2.2 : 0.25);
+      } else if (a.rearmT > 0) {
+        a.rearmT -= dt;
+        if (a.rearmT <= 0) a.armed = true;
       }
     }
   }
@@ -375,18 +392,31 @@ export class Level {
     const chain = cb.build(m, { name: 'gate-chain' });
     this.root.add(chain);
     const collider = this.game.world.addBox({ x, z, w: halfWidth * 2 + 0.2, d: 0.3, h, blocksSight: false, tag: 'gate', data: { gate: spec.id || 'gate' } });
+    // The swung-open leaves are solid too (enabled once the gate opens), so nobody walks through them.
+    const len = halfWidth - 0.05;
+    const openLeaves = leaves.map((p) => {
+      const rot = -p.userData.side * GATE_SWING;
+      const cx = -p.userData.side * len / 2;
+      const c = this.game.world.addBox({
+        x: p.position.x + Math.cos(rot) * cx, z: p.position.z - Math.sin(rot) * cx, w: len, d: 0.12, h, rot,
+        blocksSight: false, tag: 'gate-leaf',
+      });
+      this.game.world.setEnabled(c, false);
+      return c;
+    });
     const gate = {
       id: spec.id || 'gate',
       pos: new THREE.Vector3(x, 1, z),
       leaves,
       chain,
       collider,
+      openLeaves,
       open: false,
       anim: 0,
       wasHolding: false,
       noiseT: 0,
       order: spec.order ?? 4.5,
-      rect: { minX: x - halfWidth - 0.5, maxX: x + halfWidth + 0.5, minZ: z - 0.6, maxZ: z + 0.6 },
+      rect: { minX: x - halfWidth - 0.6, maxX: x + halfWidth + 0.6, minZ: z - halfWidth - 0.4, maxZ: z + 0.6 },
     };
     gate.interactable = {
       id: 'gate',
@@ -420,6 +450,7 @@ export class Level {
     g.interactable.enabled = false;
     g.chain.visible = false;
     this.game.world.setEnabled(g.collider, false);
+    for (const c of g.openLeaves) this.game.world.setEnabled(c, true);
     this.game.nav?.rebuildArea(g.rect.minX, g.rect.minZ, g.rect.maxX, g.rect.maxZ);
     this.game.player?.addShake?.(0.12);
     this.game.bus.emit('gate:open', { id: g.id, pos: g.pos.clone() });
@@ -438,6 +469,7 @@ export class Level {
     g.chain.visible = true;
     for (const p of g.leaves) p.rotation.y = 0;
     this.game.world.setEnabled(g.collider, true);
+    for (const c of g.openLeaves) this.game.world.setEnabled(c, false);
     this.game.nav?.rebuildArea(g.rect.minX, g.rect.minZ, g.rect.maxX, g.rect.maxZ);
   }
 
@@ -457,7 +489,7 @@ export class Level {
       g.anim = Math.min(1, g.anim + dt / 1.8);
       const e = 1 - Math.pow(1 - g.anim, 3);
       // Swing away from the player (towards -Z) with a little bounce at the end.
-      for (const p of g.leaves) p.rotation.y = -p.userData.side * (1.75 * e - Math.sin(e * Math.PI) * 0.08);
+      for (const p of g.leaves) p.rotation.y = -p.userData.side * (GATE_SWING * e - Math.sin(e * Math.PI) * 0.08);
     }
   }
 

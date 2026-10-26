@@ -264,7 +264,10 @@ export function buildCity(B) {
   rubble(B, { x: 0.5, z: -135.5, w: 25, d: 20, h: 5.5, collider: false });
   rubble(B, { x: -4, z: -129, w: 10, d: 6, h: 2.2, collider: false, density: 0.6 });
   rubble(B, { x: 6, z: -128, w: 8, d: 5, h: 1.8, collider: false, density: 0.6 });
-  B.solid(0.5, -137, 25.4, 18, 4.6, 0, { tag: 'rubble' });
+  // Mound collider: x -12.2..12 up to the pharmacy's front wall, plus the strip that walls the
+  // yard's west side (x 12..13.2, behind the pharmacy) -- not inside the pharmacy itself.
+  B.solid(-0.1, -137, 24.2, 18, 4.6, 0, { tag: 'rubble' });
+  B.solid(12.6, -141, 1.2, 10, 4.6, 0, { tag: 'rubble' });
   B.solid(0.5, -128, 22, 2.4, 1.6, 0, { tag: 'rubble' });
   // slabs leaning on the mound + a car half buried
   b.box('rough', mat(-3, 0, -131.5, 0.3, -0.5), 9, 0.35, 5, shade(COL.concrete, 0.75), { ao: 0.2 });
@@ -401,7 +404,8 @@ export function buildCity(B) {
   B.fire(new THREE.Vector3(17.2, 27.8, -277.6), 1.3, false);
   // Graffiti: the rule of the boulevard
   B.graffiti(GRAFFITI.calls, 3.48, 1.2, -212.2, W, 4.6, 2.3, 'WHEN IT CALLS THEY LISTEN — when the giant calls, they freeze and look up. Blind and deaf until it ends.', { range: 9, duration: 7 });
-  B.graffiti(GRAFFITI.move, -2.0, 0.15, -234.25, S, 2.6, 1.0, 'MOVE WHEN IT CALLS. Freeze behind cover between calls.', { range: 8 });
+  // (centred on the planter's south face: x -5.2..-2.0)
+  B.graffiti(GRAFFITI.move, -3.6, 0.12, -234.28, S, 2.4, 1.0, 'MOVE WHEN IT CALLS. Freeze behind cover between calls.', { range: 8 });
   B.graffiti(GRAFFITI.tally, -17.48, 1.4, -322, E, 2.4, 1.2);
 
   // ==========================================================================================
@@ -426,6 +430,7 @@ export function buildCity(B) {
   {
     const z = -368;
     b.box('rough', mat(0, 11.2, z), 220, 1.5, 13, color(0x8a8480), { ao: 0, uvScale: 4 });
+    B.solid(0, z, 60, 13, 1.5, 0, { y: 11.2, blocksMove: false, tag: 'deck' }); // overhead: stops lobbed bottles only
     b.box('rough', mat(0, 12.7, z - 6.2), 220, 1.1, 0.4, color(0x7a7470), { ao: 0 });
     b.box('rough', mat(0, 12.7, z + 6.2), 220, 1.1, 0.4, color(0x7a7470), { ao: 0 });
     for (const x of [-6.6, 6.6, -26, 26, -48, 48]) {
@@ -463,7 +468,11 @@ export function buildCity(B) {
     b.box('metal', mat(x - 0.5, 4.9, z - 0.2, 0.6, -0.4), 1.4, 0.5, 0.25, COL.darkSteel, { ao: 0 });
     b.box('emissive', mat(x - 0.5, 4.9, z - 0.33, 0.6, -0.4), 1.25, 0.4, 0.02, color(0xf4f8ff), { faces: FACE.nz });
     B.solid(x, z, 1.8, 1.2, 1.0, 0.3, { tag: 'generator' });
-    B.light({ pos: { x: x - 2.2, y: 4.2, z: z - 2.4 }, color: 0xe6eef4, intensity: 80, distance: 20, stealthRadius: 8.5, stealthWeight: 0.95, flicker: 0.05, halo: { size: 1.4, intensity: 2.4 } });
+    // The lamp is aimed at the chain: the registered source sits over the lit patch in front of
+    // the gate (so whoever cuts the chain stands well inside its stealth radius); the halo stays
+    // on the lamp head.
+    B.light({ pos: { x: 3.6, y: 4.4, z: -392.8 }, color: 0xe6eef4, intensity: 80, distance: 20, stealthRadius: 8.5, stealthWeight: 0.95, flicker: 0.05 });
+    B.glow.add(new THREE.Vector3(x - 0.55, 4.95, z - 0.45), 0xe6eef4, 1.4, 2.4);
   }
   // Booth by the gate
   kiosk(B, { x: -9.6, z: -390, yaw: E });
@@ -483,9 +492,11 @@ export function buildCity(B) {
   // The river and the bridge out, fading into the mist.
   bridge(B);
   // Graffiti
-  B.graffiti(GRAFFITI.gate, -6.6, 1.5, -366.38, S, 3.6, 1.8, 'THE GATE IS LOUD — cutting the chain will be heard. Pick your moment, or find another way round.', { range: 12 });
+  // (sized to the 1.6 m wide overpass pier, slightly condensed)
+  B.graffiti(GRAFFITI.gate, -6.6, 1.4, -366.38, S, 1.55, 1.0, 'THE GATE IS LOUD — cutting the chain will be heard. Pick your moment, or find another way round.', { range: 12 });
   B.graffiti(GRAFFITI.quiet, -15.2, 3.4, -337.8, S, 3.6, 1.8, 'QUIET WAY — the parking structure. Something sleeps in there.', { range: 14 });
-  B.graffiti(GRAFFITI.bridge, -12.08, 0.1, -411, E, 2.6, 0.9, 'BRIDGE → OUT', { range: 8 });
+  // (on the sloped face of the jersey barriers, x -12.27..-12.31 between y 0.32 and 1.05)
+  B.graffiti(GRAFFITI.bridge, -12.27, 0.3, -411, E, 2.2, 0.75, 'BRIDGE → OUT', { range: 8 });
   B.graffiti(GRAFFITI.names, 14.93, 0.6, -425.5, W, 4.4, 2.2, 'NOBODY REMEMBERS THE NAMES', { range: 10 });
 
   // ==========================================================================================
@@ -517,17 +528,26 @@ export function buildCity(B) {
   const checkpoints = [
     { id: 'start', order: 0, pos: { x: 0, z: 4 }, yaw: 0, bottles: 0, zone: 0, area: rect(-3, 3, 0, 8) },
     { id: 'main', order: 1, pos: { x: 0, z: -21.5 }, yaw: 0, bottles: 1, zone: 1, area: rect(-3, 3, -24, -20) },
-    { id: 'plaza', order: 2, pos: { x: 20.7, z: -139.5 }, yaw: 0.25, bottles: 1, zone: 2, area: rect(14, 27, -142, -137.5) },
+    // Every way into a zone crosses its checkpoint's area (the Z4 area spans both the road and the
+    // parking-structure entrance, so the quiet route also saves progress).
+    { id: 'plaza', order: 2, pos: { x: 20.7, z: -139.5 }, yaw: 0.25, bottles: 1, zone: 2, area: rect(13, 28, -142, -137) },
     { id: 'boulevard', order: 3, pos: { x: 6, z: -220.6 }, yaw: 0.35, bottles: 1, zone: 3, area: rect(-3.5, 9, -223, -212.2) },
-    { id: 'overpass', order: 4, pos: { x: -8.2, z: -347 }, yaw: 0, bottles: 1, zone: 4, area: rect(-12, 12, -350, -339) },
+    { id: 'overpass', order: 4, pos: { x: -8.2, z: -347 }, yaw: 0, bottles: 1, zone: 4, area: rect(-18, 12, -350, -338.5) },
   ];
+  // Patrol routes: every leg (including the loop's closing leg) is a straight, walkable line, so an
+  // AI that walks point to point without path-finding still never pushes through a wreck.
   const enemies = [
-    // Z0: glimpsed far ahead, crossing Main Street through the firelight.
-    { id: 'z0_crosser', zone: 0, kind: 'patrol', pos: { x: -19, z: -73.5 }, yaw: E, route: [{ x: -19, z: -73.5 }, { x: -9, z: -74.5 }, { x: 9, z: -74 }, { x: 19, z: -77 }], loop: true, pause: 4 },
+    // Z0: glimpsed far ahead, crossing Main Street through the firelight (there and back).
+    {
+      id: 'z0_crosser', zone: 0, kind: 'patrol', pos: { x: -19, z: -73.5 }, yaw: E,
+      route: [{ x: -19, z: -73.5 }, { x: -9, z: -74.5 }, { x: 9, z: -74 }, { x: 19, z: -77 }, { x: 9, z: -74 }, { x: -9, z: -74.5 }],
+      loop: true, pause: 4,
+    },
     // Z1: patrol up the east lanes and back down the west; sentry in the laundromat light.
     {
       id: 'z1_patrol', zone: 1, kind: 'patrol', pos: { x: 2.5, z: -51 }, yaw: N,
-      route: [{ x: 2.5, z: -51 }, { x: 3.5, z: -60 }, { x: 2.5, z: -72 }, { x: 0.5, z: -90 }, { x: -1.8, z: -112 }, { x: -2.5, z: -100 }, { x: -1, z: -86 }, { x: -6.5, z: -70 }, { x: -7, z: -56 }, { x: -1, z: -51 }],
+      route: [{ x: 2.5, z: -51 }, { x: 4.75, z: -54.25 }, { x: 4.75, z: -56.25 }, { x: 3.5, z: -60 }, { x: 2.5, z: -72 }, { x: 0.5, z: -90 },
+        { x: -1.8, z: -112 }, { x: -2.5, z: -100 }, { x: -1, z: -86 }, { x: -1.25, z: -78.25 }, { x: -6.5, z: -70 }, { x: -7, z: -56 }, { x: -1, z: -51 }],
       loop: true, pause: 2.5,
     },
     { id: 'z1_sentry', zone: 1, kind: 'sentry', pos: { x: -9.6, z: -90.3 }, yaw: E, scanArc: 1.7, scanPeriod: 9 },
@@ -543,13 +563,14 @@ export function buildCity(B) {
     { id: 'z3_devout_4', zone: 3, kind: 'devout', pos: { x: 15.2, z: -296 }, yaw: W, scanArc: 1.8, scanPeriod: 10 },
     { id: 'z3_devout_5', zone: 3, kind: 'devout', pos: { x: -15.2, z: -313 }, yaw: E, scanArc: 1.7, scanPeriod: 12 },
     { id: 'z3_devout_6', zone: 3, kind: 'devout', pos: { x: 15.2, z: -326 }, yaw: W - 0.2, scanArc: 1.6, scanPeriod: 11 },
-    // Z4: a patrol between the overpass and the gate; one asleep in the parking structure.
-    { id: 'z4_patrol', zone: 4, kind: 'patrol', pos: { x: 4.5, z: -391 }, yaw: W, route: [{ x: 4.5, z: -391 }, { x: -4.5, z: -391.5 }, { x: -4, z: -366 }, { x: 0.5, z: -357 }, { x: 4, z: -366 }], loop: true, pause: 2.5 },
+    // Z4: a patrol on the ramp in front of the gate (always within earshot of the chain, and
+    // never closer than 30 m to the Z4 checkpoint); one asleep in the parking structure.
+    { id: 'z4_patrol', zone: 4, kind: 'patrol', pos: { x: 4.5, z: -391 }, yaw: W, route: [{ x: 4.5, z: -391 }, { x: -4.5, z: -391.5 }, { x: -4.2, z: -378.5 }, { x: 0.5, z: -376.5 }, { x: 4.5, z: -380 }], loop: true, pause: 2.5 },
     { id: 'z4_sleeper', zone: 4, kind: 'sentry', sleeping: true, pos: { x: -18.4, z: -388 }, yaw: E, scanArc: 0.4, scanPeriod: 14 },
   ];
   const pickups = [
     { x: 0.9, z: -2.7, zone: 0 },
-    { x: 10.2, z: -50.2, zone: 1 },
+    { x: 11.3, z: -50.6, zone: 1 }, // on the kerb beside the pickup truck (not under it)
     { x: 8.2, z: -68.5, zone: 1 },
     { x: 17.6, z: -146.6, zone: 2 },
     { x: -24.6, z: -158.6, zone: 2 },
@@ -697,6 +718,8 @@ function garage(B, footprints) {
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, w = x1 - x0, d = z1 - z0;
   const slab = color(0x7c7670);
   b.flat('rough', cx, 0.015, cz, w, d, 0, [0, 0, w / 4, d / 4], color(0x6a6460));
+  // Ceiling collider: overhead only (above every eye line and agent), so it just stops thrown bottles.
+  B.solid(cx, cz, w, d, 0.35, 0, { y: 3.1, blocksMove: false, tag: 'deck' });
   for (const y of [3.1, 6.2, 9.3]) {
     b.box('rough', mat(cx, y, cz), w + 0.4, 0.35, d + 0.4, slab, { ao: 0, uvScale: 5 });
     if (y < 9) {
@@ -765,6 +788,7 @@ function garage(B, footprints) {
   B.puddle(-17, -372, 3, 1.8, 0.2);
   B.decal('papers', -17.5, -395, 2.5, 2.5, 0.7);
   belongings(B, { x: -18, z: -402, n: 4, spread: 1.6 });
-  B.graffiti(GRAFFITI.eye, -21.36, 1.0, -394, E, 1.3, 0.65);
-  B.graffiti(GRAFFITI.tally, -37.36, 1.2, -362, E, 1.4, 0.7);
+  // (on the pillars' east faces, x = pillar + 0.35)
+  B.graffiti(GRAFFITI.eye, -20.64, 1.0, -394, E, 0.68, 0.34);
+  B.graffiti(GRAFFITI.tally, -36.64, 1.2, -362, E, 0.68, 0.34);
 }

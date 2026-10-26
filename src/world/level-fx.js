@@ -47,8 +47,9 @@ export class GlowSprites {
     if (!it || it.intensity === intensity) return;
     it.intensity = intensity;
     if (this.attr) {
+      // Whole-buffer upload (a few hundred floats). Per-sprite update ranges would pile up
+      // without bound while the game is simulated headless (no render to flush them).
       this.attr.array.fill(intensity, i * 4, i * 4 + 4);
-      this.attr.addUpdateRange?.(i * 4, 4);
       this.attr.needsUpdate = true;
     }
   }

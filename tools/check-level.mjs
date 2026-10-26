@@ -76,13 +76,25 @@ const R = await h.eval(() => {
       for (let k = 0; k < 20; k++) if (nav.randomPointNear(e.pos.x, e.pos.z, e.radius)) n++;
       if (n < 15) routeOk = false;
     }
-    return { id: e.id, zone: e.zone, kind: e.kind, bad: bad.length, routeOk };
+    // Every leg (incl. the loop's closing leg) straight-line walkable, so an AI that walks point to
+    // point without path-finding never pushes through a wreck.
+    const straight = [];
+    if (e.route) {
+      const r = e.route;
+      const legs = [[e.pos, r[0]]];
+      for (let i = 0; i + 1 < r.length; i++) legs.push([r[i], r[i + 1]]);
+      if (e.loop && r.length > 2) legs.push([r[r.length - 1], r[0]]);
+      for (const [a, b] of legs) if (!nav.lineWalkable(a.x, a.z, b.x, b.z)) straight.push(`(${a.x},${a.z})->(${b.x},${b.z})`);
+    }
+    return { id: e.id, zone: e.zone, kind: e.kind, bad: bad.length, routeOk, straight };
   });
   // Pickups reachable from the start
   res.pickups = L.pickups.map((p) => {
     const w = nav.nearestWalkable(p.pos.x, p.pos.z, 4);
     const reach = w && nav.regionAt(w.x, w.z) === startRegion && Math.hypot(w.x - p.pos.x, w.z - p.pos.z) < (p.interactable.range ?? 2.2) - 0.3;
-    return { i: p.index, zone: p.zone, x: p.pos.x, z: p.pos.z, ok: !!reach };
+    // ...and lying in the open, not inside (under) a wreck or prop.
+    const clear = !world.pointBlocked(p.pos.x, 0.1, p.pos.z, 0.12);
+    return { i: p.index, zone: p.zone, x: p.pos.x, z: p.pos.z, ok: !!reach && clear };
   });
   // Checkpoints: walkable, inside their own area, inside their zone, and in the start region
   res.checkpoints = L.checkpoints.map((c) => ({
@@ -90,23 +102,85 @@ const R = await h.eval(() => {
     inArea: c.pos.x >= c.area.minX && c.pos.x <= c.area.maxX && c.pos.z >= c.area.minZ && c.pos.z <= c.area.maxZ,
     zone: L.zoneAt(c.pos) === c.zone,
   }));
-  // Spawn safety: no enemy can see a checkpoint (any scan angle, view distance 28, cone 115 deg + scan)
+  // Spawn safety: no enemy can see a standing player at a checkpoint (view distance 28 m). Sentries
+  // and devouts: cone 115 deg + scan arc from their post. Patrols: sampled every metre along every
+  // leg, looking along the leg. Wanderers: anywhere within their radius, any direction.
+  const sees = (ex, ez, c) => {
+    const d = Math.hypot(c.pos.x - ex, c.pos.z - ez);
+    return d <= 28 && !world.segmentBlocked({ x: ex, y: 1.95, z: ez }, { x: c.pos.x, y: 1.65, z: c.pos.z });
+  };
+  const inCone = (ex, ez, fx, fz, half, c) => {
+    const dx = c.pos.x - ex, dz = c.pos.z - ez;
+    const d = Math.hypot(dx, dz) || 1;
+    return Math.acos(Math.max(-1, Math.min(1, (dx * fx + dz * fz) / d))) <= half;
+  };
   res.spawnSafety = L.checkpoints.map((c) => {
     const seen = [];
     for (const e of L.enemies) {
       if (e.sleeping) continue;
-      const dx = c.pos.x - e.pos.x, dz = c.pos.z - e.pos.z;
-      const d = Math.hypot(dx, dz);
-      if (d > 28) continue;
+      if (e.kind === 'patrol' && e.route) {
+        const r = [e.pos, ...e.route];
+        if (e.loop) r.push(e.route[0]);
+        let hit = null;
+        for (let i = 0; i + 1 < r.length && !hit; i++) {
+          const a = r[i], b = r[i + 1];
+          const len = Math.hypot(b.x - a.x, b.z - a.z);
+          if (len < 0.01) continue;
+          const fx = (b.x - a.x) / len, fz = (b.z - a.z) / len;
+          for (let t = 0; t <= len && !hit; t += 1) {
+            const px = a.x + fx * t, pz = a.z + fz * t;
+            if (inCone(px, pz, fx, fz, (115 / 2) * (Math.PI / 180), c) && sees(px, pz, c)) hit = `${e.id}@(${px.toFixed(0)},${pz.toFixed(0)})`;
+          }
+        }
+        if (hit) seen.push(hit);
+        continue;
+      }
+      if (e.kind === 'wander') {
+        let hit = null;
+        for (let k = 0; k < 64 && !hit; k++) {
+          const a = (k / 64) * Math.PI * 2 * 5, r = e.radius * Math.sqrt((k + 0.5) / 64);
+          const px = e.pos.x + Math.cos(a) * r, pz = e.pos.z + Math.sin(a) * r;
+          if (nav.isWalkable(px, pz) && sees(px, pz, c)) hit = `${e.id}@(${px.toFixed(0)},${pz.toFixed(0)})`;
+        }
+        if (hit) seen.push(hit);
+        continue;
+      }
       const half = (115 / 2) * (Math.PI / 180) + (e.scanArc || 0) / 2;
-      const fx = -Math.sin(e.yaw || 0), fz = -Math.cos(e.yaw || 0);
-      const ang = Math.acos(Math.max(-1, Math.min(1, (dx * fx + dz * fz) / d)));
-      if (e.kind !== 'wander' && e.kind !== 'patrol' && ang > half) continue;
-      const blocked = world.segmentBlocked({ x: e.pos.x, y: 1.95, z: e.pos.z }, { x: c.pos.x, y: 1.65, z: c.pos.z });
-      if (!blocked) seen.push(`${e.id}@${d.toFixed(0)}m`);
+      if (inCone(e.pos.x, e.pos.z, -Math.sin(e.yaw || 0), -Math.cos(e.yaw || 0), half, c) && sees(e.pos.x, e.pos.z, c)) {
+        seen.push(`${e.id}@${Math.hypot(c.pos.x - e.pos.x, c.pos.z - e.pos.z).toFixed(0)}m`);
+      }
     }
     return { id: c.id, seen };
   });
+  // Checkpoint areas can't be bypassed: flood the nav grid from checkpoint k-1 with checkpoint k's
+  // area walled off; nothing deeper than 3 m into zone k (or beyond) may be reachable.
+  res.cpGates = [];
+  for (let k = 1; k < L.checkpoints.length; k++) {
+    const prev = L.checkpoints[k - 1], cp = L.checkpoints[k], a = cp.area;
+    const inArea = (x, z) => x >= a.minX && x <= a.maxX && z >= a.minZ && z <= a.maxZ;
+    const near = (x, z, m) => x >= a.minX - m && x <= a.maxX + m && z >= a.minZ - m && z <= a.maxZ + m;
+    const s = nav.index(prev.pos.x, prev.pos.z);
+    const seenCells = new Uint8Array(nav.w * nav.h);
+    const stack = [s];
+    seenCells[s] = 1;
+    let leak = null;
+    while (stack.length && !leak) {
+      const i = stack.pop();
+      const ix = i % nav.w, iz = (i - ix) / nav.w;
+      const ctr = nav.centerOf(i);
+      const zi = L.zoneAt(ctr);
+      if (zi >= cp.zone && !near(ctr.x, ctr.z, 3)) leak = [+ctr.x.toFixed(1), +ctr.z.toFixed(1)];
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const j = (iz + dz) * nav.w + ix + dx;
+        if (seenCells[j] || !nav.walk[j]) continue;
+        const cj = nav.centerOf(j);
+        if (inArea(cj.x, cj.z)) continue;
+        seenCells[j] = 1;
+        stack.push(j);
+      }
+    }
+    res.cpGates.push({ id: cp.id, leak });
+  }
   // Enclosure: sample the bounds; any cell reachable from the start must lie inside a route rect.
   const rects = L.routeRects;
   const inRoute = (x, z, pad) => rects.some((r) => x >= r.minX - pad && x <= r.maxX + pad && z >= r.minZ - pad && z <= r.maxZ + pad);
@@ -252,9 +326,12 @@ console.log(`boulevard crouch-hidden bands (z): ${R.boulevard.hiddenBands.join('
 check(R.boulevard.maxGap <= 22, `boulevard: hidden pockets no more than 22 m apart (max gap ${R.boulevard.maxGap.toFixed(1)} m)`);
 for (const a of R.alarmReach) check(a.far.length === 0, `alarm ${a.id} reaches every snatcher in its zone ${a.far.join(' ')}`);
 for (const c of R.checkpoints) check(c.walk && c.region && c.inArea && c.zone, `checkpoint ${c.id} walkable/region/area/zone`);
-for (const s of R.spawnSafety) check(s.seen.length === 0, `checkpoint ${s.id} not visible to enemies ${s.seen.join(' ')}`);
+for (const s of R.spawnSafety) check(s.seen.length === 0, `checkpoint ${s.id} not visible to enemies (posts, patrol legs, wander radius) ${s.seen.join(' ')}`);
+for (const c of R.cpGates) check(!c.leak, `checkpoint ${c.id}: its area can't be bypassed ${c.leak ? 'leak at ' + c.leak : ''}`);
 for (const e of R.enemies) check(e.bad === 0 && e.routeOk, `enemy ${e.id} (${e.kind}, zone ${e.zone}) spawn/route walkable + connected`);
-for (const p of R.pickups) check(p.ok, `pickup ${p.i} (zone ${p.zone}) at ${p.x.toFixed(1)},${p.z.toFixed(1)} reachable`);
+for (const e of R.enemies) if (e.straight.length) check(false, `enemy ${e.id} route legs straight-line walkable: blocked ${e.straight.join(' ')}`);
+check(R.enemies.every((e) => !e.straight.length), 'every patrol leg (incl. loop closure) is a straight walkable line');
+for (const p of R.pickups) check(p.ok, `pickup ${p.i} (zone ${p.zone}) at ${p.x.toFixed(1)},${p.z.toFixed(1)} reachable and in the open`);
 check(R.leakCount === 0, `nav enclosure: reachable cells outside route rects = ${R.leakCount} ${JSON.stringify(R.leaks.slice(0, 8))}`);
 check(R.outside.reachable === 0, `points just outside the route unreachable (${R.outside.tested} tested, ${R.outside.reachable} reachable)`);
 check(R.playerFlood.escaped.length === 0, `player-radius flood fill (0.5 m lattice) stays inside (${R.playerFlood.visited} cells) ${JSON.stringify(R.playerFlood.escaped.slice(0, 6))}`);
@@ -380,10 +457,10 @@ const VIEWS = {
   v07_plaza_gas: [[-14, 1.65, -160], [-31, 1.8, -170]],
   v08_arch: [[16, 1.65, -192], [0, 4, -210]],
   v09_boulevard: [[0, 1.65, -219], [0, 9, -300]],
-  v10_boulevard_mid: [[0.5, 0.95, -275], [-12, 3, -330]],
+  v10_boulevard_mid: [[2.2, 0.95, -273.5], [-12, 3, -330]],
   v11_overpass: [[-6, 1.65, -346], [0, 4, -396]],
   v12_garage: [[-16, 1.65, -342], [-24, 1.4, -390]],
-  v13_gate: [[2, 1.65, -386], [-1, 1.8, -420]],
+  v13_gate: [[-1, 1.65, -386], [-1, 1.8, -420]],
   v14_exit: [[0, 1.65, -400], [3, 3, -446]],
   t_title: null,
   o_z0_z1: [[0, 95, -40], [0, 0, -75]],
@@ -447,6 +524,9 @@ const G = await h.eval(() => {
   res.alarmNoises = log.filter((e) => e.t === 'noise' && e.src === 'alarm').length;
   g.simulate(13);
   res.alarmEnded = log.some((e) => e.t === 'alarm:end');
+  res.alarmDisarmedAfter = !a.armed;
+  g.simulate(5);
+  res.alarmSelfRearm = a.armed;
   res.alarmRearmed = (() => {
     L.resetDynamic(L.checkpoints[2]);
     return a.armed;
@@ -461,6 +541,13 @@ const G = await h.eval(() => {
   res.gateOpen = gate.open;
   res.gateNoises = log.filter((e) => e.t === 'noise' && e.src === 'gate').length;
   res.gateNav = g.nav.isWalkable(0, gate.pos.z);
+  res.leavesSolid = gate.openLeaves.every((c) => c.enabled);
+  // walk straight through the open gate
+  g.teleport(0, gate.pos.z + 1.2, 0);
+  g.input.keys.add('KeyW');
+  g.simulate(1.5);
+  g.input.keys.delete('KeyW');
+  res.walkedThrough = g.player.position.z < gate.pos.z - 1;
   g.simulate(2);
   g.teleport(0, -429, 0);
   g.simulate(0.2);
@@ -475,7 +562,7 @@ const G = await h.eval(() => {
   g.simulate(0.2);
   res.messages = log.filter((e) => e.t === 'level:message').map((e) => e.text.slice(0, 24));
   L.resetDynamic(L.checkpoints[4]);
-  res.gateClosedAfterReset = !gate.open && !g.nav.isWalkable(0, gate.pos.z);
+  res.gateClosedAfterReset = !gate.open && !g.nav.isWalkable(0, gate.pos.z) && !gate.openLeaves.some((c) => c.enabled);
   offs.forEach((f) => f());
   return res;
 });
@@ -484,7 +571,9 @@ check(G.zonesEntered.join() === 'alley,main,plaza,boulevard,overpass', 'zone:ent
 check(G.cps.length >= 4, 'level:checkpoint fires for checkpoints');
 check(G.bottlesAfterPickup === 1 && !G.pickupEnabled && G.pickupRestored, 'bottle pickup + restore on respawn');
 check(G.alarmNoises >= 3 && G.alarmEnded && G.alarmRearmed, 'alarm emits noise, ends, re-arms');
+check(G.alarmDisarmedAfter && G.alarmSelfRearm, 'alarm goes quiet after it ends, then re-arms itself a few seconds later');
 check(G.gateOpen && G.gateNoises >= 3 && G.gateNav && G.gateClosedAfterReset, 'gate: hold to cut, noisy, opens nav, closes on reset');
+check(G.leavesSolid && G.walkedThrough, 'gate: open leaves are solid, the opening is walkable');
 check(G.exit, 'level:exit fires past z -430');
 check(G.messages.length >= 1, 'graffiti emits level:message when read');
 

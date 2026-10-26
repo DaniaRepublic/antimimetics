@@ -83,15 +83,19 @@ const BOX_FACES = [
 export const FACE = { px: 1, nx: 2, py: 4, ny: 8, pz: 16, nz: 32, all: 63, noBottom: 55 };
 
 export class Batch {
-  constructor({ chunkSize = 90, extras = {} } = {}) {
+  // chunkSizes: per-material override of chunkSize (Infinity = one mesh for the whole level).
+  // Light, sparse materials gain nothing from culling, so they are merged whole to save draw calls.
+  constructor({ chunkSize = 90, chunkSizes = {}, extras = {} } = {}) {
     this.chunkSize = chunkSize;
+    this.chunkSizes = chunkSizes;
     this.extras = extras; // { materialKey: { attrName: size } }
     this.buffers = new Map();
     this.triangles = 0;
   }
 
   buffer(key, z) {
-    const chunk = Math.floor(z / this.chunkSize);
+    const size = this.chunkSizes[key] ?? this.chunkSize;
+    const chunk = Number.isFinite(size) ? Math.floor(z / size) : 0;
     const id = key + '|' + chunk;
     let b = this.buffers.get(id);
     if (!b) {

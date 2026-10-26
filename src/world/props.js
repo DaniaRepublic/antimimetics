@@ -690,6 +690,7 @@ export function gasCanopy(B, { x, z, w = 14, d = 10, h = 5 }) {
     }
   }
   b.box('paint', mat(x, h, z), w, 0.9, d, C(0xb9b2a4), { ao: 0 });
+  B.solid(x, z, w, d, 0.9, 0, { y: h, blocksMove: false, tag: 'canopy' }); // overhead only: stops lobbed bottles
   b.box('rough', mat(x, h - 0.02, z), w - 0.6, 0.05, d - 0.6, C(0x1a1816), { ao: 0, faces: FACE.ny });
   // canopy fascia band
   for (const [fx, fz, fw, yaw] of [[x, z - d / 2 - 0.01, w, 0], [x, z + d / 2 + 0.01, w, Math.PI], [x + w / 2 + 0.01, z, d, -Math.PI / 2], [x - w / 2 - 0.01, z, d, Math.PI / 2]]) {
