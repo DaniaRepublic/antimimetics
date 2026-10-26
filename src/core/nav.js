@@ -154,10 +154,19 @@ export class NavGrid {
       z1: Math.min(this.h - 2, Math.floor((maxZ + pad - this.minZ) / this.cell)),
     };
     for (let iz = clip.z0; iz <= clip.z1; iz++) this.walk.fill(1, iz * this.w + clip.x0, iz * this.w + clip.x1 + 1);
-    const list = this.world.query(minX - pad, minZ - pad, maxX + pad, maxZ + pad).slice();
+    // Every collider whose inflated footprint reaches a cleared cell must be re-rasterised: query
+    // the cleared cells' extent grown by the agent radius (querying only the requested rectangle
+    // plus padding missed neighbours, e.g. a fence post next to the gate, leaving holes).
+    const r = this.agentRadius, c = this.cell;
+    const list = this.world.query(
+      this.minX + clip.x0 * c - r, this.minZ + clip.z0 * c - r,
+      this.minX + (clip.x1 + 1) * c + r, this.minZ + (clip.z1 + 1) * c + r,
+    ).slice();
     for (const col of list) this._rasterise(col, clip);
     this._labelRegions();
-    this._buildJumps();
+    // Walkability changed inside clip only: horizontal tables of its rows (+1 either side, the
+    // forced-neighbour test looks at adjacent rows) and vertical tables of its columns.
+    this._buildJumps({ z0: clip.z0 - 1, z1: clip.z1 + 1, x0: clip.x0 - 1, x1: clip.x1 + 1 });
   }
 
   // Labels connected walkable components (8-connected without corner cutting, which is the same
@@ -517,7 +526,9 @@ export class NavGrid {
   // Jump tables (JPS+): for every cell and each straight direction, k > 0 = the next jump point
   // (a cell where a side opens up behind an obstacle) is k steps away; k <= 0 = no jump point,
   // -k walkable steps then a wall. Rebuilt with the walkable grid (build / rebuildArea), ~1 ms.
-  _buildJumps() {
+  // `area` ({x0, x1, z0, z1} in cells) limits the rebuild to the rows z0..z1 (whole rows) and the
+  // columns x0..x1 (whole columns); omitted = the full grid.
+  _buildJumps(area = null) {
     const { w, h, walk } = this;
     const n = w * h;
     if (!this._jE || this._jE.length !== n) {
@@ -526,16 +537,16 @@ export class NavGrid {
       this._jW = new T(n);
       this._jS = new T(n);
       this._jN = new T(n);
+      area = null;
     }
     const E = this._jE, W = this._jW, S = this._jS, N = this._jN;
-    E.fill(0);
-    W.fill(0);
-    S.fill(0);
-    N.fill(0);
+    const zA = Math.max(1, area ? area.z0 : 1), zB = Math.min(h - 2, area ? area.z1 : h - 2);
+    const xA = Math.max(1, area ? area.x0 : 1), xB = Math.min(w - 2, area ? area.x1 : w - 2);
     // Horizontal moves: arriving at j from i, j is a jump point if a side of j is open while
-    // the same side of i is blocked.
-    for (let z = 1; z < h - 1; z++) {
+    // the same side of i is blocked. (Border rows/columns are never walkable: their entries stay 0.)
+    for (let z = zA; z <= zB; z++) {
       const base = z * w;
+      E[base + w - 1] = 0;
       for (let x = w - 2; x >= 0; x--) {
         const i = base + x, j = i + 1;
         if (!walk[j]) E[i] = 0;
@@ -545,6 +556,7 @@ export class NavGrid {
           E[i] = d > 0 ? d + 1 : d - 1;
         }
       }
+      W[base] = 0;
       for (let x = 1; x < w; x++) {
         const i = base + x, j = i - 1;
         if (!walk[j]) W[i] = 0;
@@ -556,7 +568,8 @@ export class NavGrid {
       }
     }
     // Vertical moves.
-    for (let x = 1; x < w - 1; x++) {
+    for (let x = xA; x <= xB; x++) {
+      S[(h - 1) * w + x] = 0;
       for (let z = h - 2; z >= 0; z--) {
         const i = z * w + x, j = i + w;
         if (!walk[j]) S[i] = 0;
@@ -566,6 +579,7 @@ export class NavGrid {
           S[i] = d > 0 ? d + 1 : d - 1;
         }
       }
+      N[x] = 0;
       for (let z = 1; z < h; z++) {
         const i = z * w + x, j = i - w;
         if (!walk[j]) N[i] = 0;

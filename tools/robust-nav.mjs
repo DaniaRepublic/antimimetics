@@ -165,6 +165,30 @@ for (let wi = 0; wi < WORLDS; wi++) {
   }
 }
 
+// --- rebuildArea (the gate): incremental tables and labels equal a fresh build -------------------
+for (let wi = 0; wi < 12; wi++) {
+  const rng = makeRng(500 + wi);
+  const world = new CollisionWorld();
+  const boxes = [];
+  for (let i = 0; i < 60; i++) boxes.push(world.addBox({ x: rng() * 60, z: rng() * 120, w: 0.5 + rng() * 8, d: 0.5 + rng() * 8, h: 3, rot: rng() * 3 }));
+  const bounds = { minX: 0, maxX: 60, minZ: 0, maxZ: 120 };
+  const nav = new NavGrid(world, bounds, { cell: 0.5, agentRadius: 0.45 });
+  nav.build();
+  for (let step = 0; step < 6; step++) {
+    const b = boxes[Math.floor(rng() * boxes.length)];
+    world.setEnabled(b, !b.enabled);
+    if (step % 3 === 2) world.updateBox(b, { x: rng() * 60, z: rng() * 120 }); // moved: rebuild both places
+    nav.rebuildArea(b.minX, b.minZ, b.maxX, b.maxZ);
+    if (step % 3 === 2) nav.build();
+    const fresh = new NavGrid(world, bounds, { cell: 0.5, agentRadius: 0.45 });
+    fresh.build();
+    const same = (a, c) => a.length === c.length && a.every((v, i) => v === c[i]);
+    if (!same(nav.walk, fresh.walk)) fail(`rebuild ${wi}/${step}: walkable grid differs from a fresh build`);
+    else if (!same(nav.region, fresh.region)) fail(`rebuild ${wi}/${step}: regions differ from a fresh build`);
+    else for (const k of ['_jE', '_jW', '_jS', '_jN']) if (!same(nav[k], fresh[k])) fail(`rebuild ${wi}/${step}: jump table ${k} differs from a fresh build`);
+  }
+}
+
 // --- region labelling cost on a level-sized grid (80 m x 461 m at 0.5 m) -----------------------
 {
   const rng = makeRng(99);
